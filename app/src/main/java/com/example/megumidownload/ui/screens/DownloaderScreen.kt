@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.livedata.observeAsState
@@ -66,8 +67,8 @@ fun DownloaderScreen() {
     val workManager = androidx.work.WorkManager.getInstance(context)
     // We can observe work by tag if we tag them "rss_download"
     val workInfos by workManager.getWorkInfosByTagLiveData("rss_download").observeAsState(emptyList())
-    // Filter for active work
-    val activeWorker = workInfos.find { it.state == androidx.work.WorkInfo.State.RUNNING || it.state == androidx.work.WorkInfo.State.ENQUEUED }
+    // Filter for active work (including BLOCKED)
+    val activeWorker = workInfos.find { !it.state.isFinished } // RUNNING, ENQUEUED, BLOCKED
     
     // Auto-Scan State
     var showScanDialog by remember { mutableStateOf(false) }
@@ -152,13 +153,15 @@ fun DownloaderScreen() {
     if (extractionUrl != null) {
         HiddenWebView(
             url = extractionUrl!!,
-            onLinkFound = { directLink ->
-                if (directLink != null && extractionSeries != null && downloadConfig.value != null) {
+            onLinkFound = { result ->
+                if (result != null && extractionSeries != null && downloadConfig.value != null) {
                     try {
                         // Start RssDownloadWorker
                         val gson = com.google.gson.Gson()
                         val inputData = androidx.work.workDataOf(
-                            "url" to directLink,
+                            "url" to result.url,
+                            "cookie" to result.cookie,
+                            "userAgent" to result.userAgent,
                             "title" to extractionItemTitle,
                             "seriesJson" to gson.toJson(extractionSeries),
                             "configJson" to gson.toJson(downloadConfig.value)
@@ -169,8 +172,13 @@ fun DownloaderScreen() {
                             .addTag("rss_download")
                             .build()
                         
-                        workManager.enqueue(request)
-                        android.widget.Toast.makeText(context, "Download & Processing Started", android.widget.Toast.LENGTH_SHORT).show()
+                        // Use Unique Work with APPEND to enforce single file at a time
+                        workManager.enqueueUniqueWork(
+                            "gofile_download_queue",
+                            androidx.work.ExistingWorkPolicy.APPEND,
+                            request
+                        )
+                        android.widget.Toast.makeText(context, "Queued Download", android.widget.Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         android.widget.Toast.makeText(context, "Failed to start worker: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                     }
@@ -191,16 +199,46 @@ fun DownloaderScreen() {
         // Active Worker Progress
         if (activeWorker != null) {
             val progress = activeWorker.progress.getFloat("progress", 0f)
-            val status = activeWorker.progress.getString("status") ?: "Working..."
-            Card(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Background Task", style = MaterialTheme.typography.labelMedium)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(status, style = MaterialTheme.typography.bodySmall)
+            val isBlocked = activeWorker.state == androidx.work.WorkInfo.State.BLOCKED
+            val status = if (isBlocked) "Queued (Waiting)..." else activeWorker.progress.getString("status") ?: "Working..."
+            
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = if(isBlocked) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Task: ${activeWorker.id.toString().take(4)}...", style = MaterialTheme.typography.labelMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        if (isBlocked) {
+                             LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.tertiary)
+                        } else {
+                             LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(status, style = MaterialTheme.typography.bodySmall)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(onClick = { workManager.cancelWorkById(activeWorker.id) }) {
+                        Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Cancel This Task")
+                    }
                 }
             }
+        }
+        
+        // Debug/Reset Queue Button
+        OutlinedButton(
+            onClick = { 
+                workManager.cancelUniqueWork("gofile_download_queue") 
+                workManager.pruneWork()
+                android.widget.Toast.makeText(context, "Queue Force Cleared", android.widget.Toast.LENGTH_SHORT).show()
+            },
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        ) {
+            Text("Force Clear Queue")
         }
     
         // ... (Rest of UI)
@@ -388,8 +426,16 @@ fun DownloaderScreen() {
             seriesNameFolder = seriesList.find { dialogTitle.contains(it.fileNameMatch) }?.folderName, // Heuristic to find series folder
             onDismiss = { showLinksDialog = false },
             onLinkClick = { url ->
-                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                context.startActivity(intent)
+                try {
+                    if (url.isNotBlank()) {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                        context.startActivity(intent)
+                    } else {
+                        android.widget.Toast.makeText(context, "Invalid Link", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    android.widget.Toast.makeText(context, "Cannot open link: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                }
             }
         )
     }
@@ -529,7 +575,12 @@ fun DownloadLinksDialog(
             } else {
                 androidx.compose.foundation.lazy.LazyColumn(modifier = Modifier.heightIn(max = 400.dp)) {
                     items(items) { item ->
-                        val isDownloaded = remember(item.title) { isEpisodeDownloaded(item.title, seriesNameFolder, downloadConfig) }
+                        // Move I/O to background
+                        val isDownloaded by produceState(initialValue = false, item.title) {
+                            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                isEpisodeDownloaded(item.title, seriesNameFolder, downloadConfig)
+                            }
+                        }
                         
                         Column(modifier = Modifier.padding(bottom = 16.dp).background(if(isDownloaded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.3f) else MaterialTheme.colorScheme.surface)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -580,61 +631,118 @@ fun Modifier.scale(scale: Float): Modifier = this.then(
     Modifier.graphicsLayer(scaleX = scale, scaleY = scale)
 )
 
+data class ExtractionResult(
+    val url: String,
+    val cookie: String?,
+    val userAgent: String?
+)
+
 @Composable
-fun HiddenWebView(url: String, onLinkFound: (String?) -> Unit) {
+fun HiddenWebView(url: String, onLinkFound: (ExtractionResult?) -> Unit) {
+    var webViewRef by remember { mutableStateOf<android.webkit.WebView?>(null) }
+
     androidx.compose.ui.viewinterop.AndroidView(
         factory = { context ->
             android.webkit.WebView(context).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.userAgentString = "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.0.0 Mobile Safari/537.36"
-                
-                webViewClient = object : android.webkit.WebViewClient() {
-                    private var found = false
-                    
-                    override fun onPageFinished(view: android.webkit.WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        if (found) return
-                        
-                        // Inject safe JS to find link
-                        // Heuristic: Find first 'a' tag ending in .mkv or .mp4
-                        val js = """
-                            (function() {
-                                var links = document.getElementsByTagName('a');
-                                for(var i=0; i<links.length; i++) {
-                                    if(links[i].href.match(/\.(mkv|mp4)$/i)) {
-                                        return links[i].href;
-                                    }
-                                }
-                                return null;
-                            })();
-                        """.trimIndent()
-                        
-                        view?.evaluateJavascript(js) { result ->
-                            // result is a JSON string, e.g. "https://..." or "null"
-                            if (result != null && result != "null" && result != "\"null\"") {
-                                // Strip quotes if present
-                                val cleanLink = result.trim('"')
-                                if (cleanLink.isNotEmpty()) {
-                                    found = true
-                                    onLinkFound(cleanLink)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+                webViewClient = object : android.webkit.WebViewClient() {}
+            }.also { webViewRef = it }
         },
         update = { webView ->
-            webView.loadUrl(url)
+            if (webView.url != url) {
+                webView.loadUrl(url)
+            }
         },
         modifier = Modifier.size(0.dp).alpha(0f)
     )
     
-    // Timeout safety
+    // Polling Logic
     LaunchedEffect(url) {
-        kotlinx.coroutines.delay(15000) // 15s timeout
-        onLinkFound(null) // Signal failure
+        var attempts = 0
+        val maxAttempts = 30 // 30 seconds
+        var found = false
+        
+        while (attempts < maxAttempts && !found) {
+            kotlinx.coroutines.delay(1000) // Wait 1s
+            attempts++
+            
+            val js = """
+                (function() {
+                    try {
+                        var resultLink = null;
+                        
+                        // Strategy 1: AppData
+                        if (typeof appdata !== 'undefined' && 
+                            appdata.fileManager && 
+                            appdata.fileManager.mainContent && 
+                            appdata.fileManager.mainContent.data && 
+                            appdata.fileManager.mainContent.data.children) {
+                            
+                            var children = appdata.fileManager.mainContent.data.children;
+                            var keys = Object.keys(children);
+                            
+                            for (var i = 0; i < keys.length; i++) {
+                                var item = children[keys[i]];
+                                if (item.type === 'file' && item.link && item.link.match(/\.(mkv|mp4|webm|avi)/i)) {
+                                    resultLink = item.link;
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        // Strategy 2: DOM fallback
+                        if (!resultLink) {
+                             var links = document.getElementsByTagName('a');
+                             for(var i=0; i<links.length; i++) {
+                                 if(links[i].href.match(/\.(mkv|mp4|webm|avi)/i)) {
+                                     resultLink = links[i].href;
+                                     break;
+                                 }
+                             }
+                        }
+                        
+                        if (resultLink) {
+                            return JSON.stringify({
+                                url: resultLink,
+                                cookie: document.cookie,
+                                userAgent: navigator.userAgent
+                            });
+                        }
+                    } catch(e) {
+                        return null;
+                    }
+                    return null;
+                })();
+            """.trimIndent()
+            
+            webViewRef?.evaluateJavascript(js) { result ->
+                if (!found && result != null && result != "null" && result != "\"null\"") {
+                    try {
+                        val cleanJson = result.trim('"').replace("\\\"", "\"").replace("\\\\", "\\") // Simple unescaping might need more robustness
+                        val jsonObject = org.json.JSONObject(cleanJson)
+                        val link = jsonObject.optString("url")
+                        val cookie = jsonObject.optString("cookie")
+                        val ua = jsonObject.optString("userAgent")
+                        
+                        if (link.isNotEmpty()) {
+                            found = true
+                            onLinkFound(ExtractionResult(link, cookie, ua))
+                        }
+                    } catch (e: Exception) {
+                        // JSON parsing failed, maybe it returned a plain string?
+                        // Ignore
+                    }
+                }
+            }
+            
+            if (found) break
+        }
+        
+        if (!found) {
+            onLinkFound(null) // Timeout
+        }
     }
 }
 

@@ -36,13 +36,13 @@ object RssParser {
                         title = ""
                         link = ""
                         description = ""
-                        if (insideItem) {
-                            when (parser.name) {
-                                "title" -> title = parser.nextText()
-                                "link" -> link = parser.nextText()
-                                "description" -> description = parser.nextText()
-                                "pubDate" -> pubDate = parser.nextText()
-                            }
+                        pubDate = ""
+                    } else if (insideItem) {
+                        when (parser.name) {
+                            "title" -> title = parser.nextText()
+                            "link" -> link = parser.nextText()
+                            "description" -> description = parser.nextText()
+                            "pubDate" -> pubDate = parser.nextText()
                         }
                     }
                 }
