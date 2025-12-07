@@ -65,65 +65,33 @@ fun DownloaderScreen() {
     
     // Workers State
     val workManager = androidx.work.WorkManager.getInstance(context)
-    // We can observe work by tag if we tag them "rss_download"
     val workInfos by workManager.getWorkInfosByTagLiveData("rss_download").observeAsState(emptyList())
-    // Filter for active work (including BLOCKED)
-    val activeWorker = workInfos.find { !it.state.isFinished } // RUNNING, ENQUEUED, BLOCKED
-    
+    // Filter for active work (RUNNING or BLOCKED or ENQUEUED)
+    // Filter for active work (RUNNING or BLOCKED or ENQUEUED)
+    val activeWorker = workInfos.find { !it.state.isFinished }
+
     // Auto-Scan State
     var showScanDialog by remember { mutableStateOf(false) }
     var foundFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     var scanned by remember { mutableStateOf(false) }
 
     // State to refresh local file checks and series list
-    var refreshTrigger by remember { mutableStateOf(0) } // Incremented to refresh
+    var refreshTrigger by remember { mutableStateOf(0) } 
     
     val seriesList = produceState<List<SeriesEntry>>(initialValue = emptyList(), key1 = refreshTrigger) {
         value = seriesManager.getSeriesList()
     }.value
     
-    // Config for local file checking
     val downloadConfig = produceState(initialValue = null as com.example.megumidownload.DownloadConfig?) {
         value = configManager.getDownloadConfig()
-    }
-    
-    // Auto-Scan Logic
-    LaunchedEffect(seriesList, localSourcePath, scanned) {
-        if (!scanned && seriesList.isNotEmpty()) {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                // Default to Downloads if localSourcePath is empty
-                val sourceDir = if (localSourcePath.isNotBlank()) File(localSourcePath) else Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                
-                if (sourceDir.exists() && sourceDir.isDirectory) {
-                    val matching = sourceDir.listFiles()?.filter { file ->
-                        file.isFile && file.name.endsWith(".mkv") && seriesList.any { series ->
-                             file.name.contains(series.fileNameMatch, ignoreCase = true)
-                        }
-                    } ?: emptyList()
-                    
-                    if (matching.isNotEmpty()) {
-                         foundFiles = matching
-                         showScanDialog = true
-                    }
-                }
-            }
-            scanned = true // Run once per session/screen load
-        }
     }
 
     // Notifications & Scheduling
     val checkInterval by configManager.rssCheckIntervalHours.collectAsState(initial = 1)
     
-    // Permission Launcher
     val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) {
-             // Permission granted
-        } else {
-             // Handle denial
-        }
-    }
+    ) { }
 
     LaunchedEffect(Unit) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
@@ -133,7 +101,6 @@ fun DownloaderScreen() {
         }
     }
 
-    // Schedule Background Work
     LaunchedEffect(checkInterval) {
         val workRequest = androidx.work.PeriodicWorkRequest.Builder(
             com.example.megumidownload.RssCheckWorker::class.java,
@@ -148,6 +115,38 @@ fun DownloaderScreen() {
             workRequest
         )
     }
+    
+    // --- Sequential Queue Logic ---
+    // Items waiting to be fetched (Link Extraction) -> Then they go to WorkManager
+    val fetchQueue = remember { mutableStateListOf<Triple<RssItem, SeriesEntry, List<String>>>() } // Item, Series, Groups (context)
+    var isFetching by remember { mutableStateOf(false) }
+
+    // Queue Processor: Watch activeWorker and fetchQueue
+    LaunchedEffect(activeWorker, fetchQueue.size, isFetching) {
+        // If no active download AND we have items in queue AND not currently fetching
+        // Note: User requested "not attempt to fetch link until previous download finishes"
+        if (activeWorker == null && fetchQueue.isNotEmpty() && !isFetching) {
+            val nextItem = fetchQueue[0]
+            
+            // Prepare for fetch
+            extractionItemTitle = nextItem.first.title
+            extractionSeries = nextItem.second
+            
+            // Find GoFile link
+            val goFileLink = nextItem.first.hostLinks.entries.find { it.key.contains("GoFile", true) }?.value
+            
+            if (goFileLink != null) {
+                loadingMessage = "Fetching Link: ${nextItem.first.title}..."
+                isLoading = true // Show spinner
+                isFetching = true
+                extractionUrl = goFileLink
+            } else {
+                // No link, skip
+                 android.widget.Toast.makeText(context, "No GoFile link for ${nextItem.first.title}", android.widget.Toast.LENGTH_SHORT).show()
+                 fetchQueue.removeAt(0)
+            }
+        }
+    }
 
     // Hidden WebView for Extraction
     if (extractionUrl != null) {
@@ -156,7 +155,6 @@ fun DownloaderScreen() {
             onLinkFound = { result ->
                 if (result != null && extractionSeries != null && downloadConfig.value != null) {
                     try {
-                        // Start RssDownloadWorker
                         val gson = com.google.gson.Gson()
                         val inputData = androidx.work.workDataOf(
                             "url" to result.url,
@@ -170,37 +168,87 @@ fun DownloaderScreen() {
                         val request = androidx.work.OneTimeWorkRequest.Builder(com.example.megumidownload.RssDownloadWorker::class.java)
                             .setInputData(inputData)
                             .addTag("rss_download")
+                            .setExpedited(androidx.work.OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST) // Important for Foreground
                             .build()
                         
-                        // Use Unique Work with APPEND to enforce single file at a time
+                        // We use Unique Work APPEND so if there's a race, it queues. 
+                        // But our 'FetchQueue' logic above ensures we only enqueue one at a time effectively.
+                        // However, keeping APPEND is safe.
                         workManager.enqueueUniqueWork(
                             "gofile_download_queue",
                             androidx.work.ExistingWorkPolicy.APPEND,
                             request
                         )
-                        android.widget.Toast.makeText(context, "Queued Download", android.widget.Toast.LENGTH_SHORT).show()
+                        android.widget.Toast.makeText(context, "Download Started: $extractionItemTitle", android.widget.Toast.LENGTH_SHORT).show()
                     } catch (e: Exception) {
                         android.widget.Toast.makeText(context, "Failed to start worker: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
                     }
                 } else {
-                    // Fallback
-                     android.widget.Toast.makeText(context, "Auto-extraction failed. Showing links.", android.widget.Toast.LENGTH_SHORT).show()
-                     showLinksDialog = true
+                     android.widget.Toast.makeText(context, "Extraction failed for $extractionItemTitle", android.widget.Toast.LENGTH_SHORT).show()
                 }
-                // Cleanup
+                
+                // Cleanup & Next
+                isFetching = false
                 isLoading = false
                 extractionUrl = null 
                 extractionSeries = null
+                if (fetchQueue.isNotEmpty()) {
+                    fetchQueue.removeAt(0)
+                }
             }
         )
     }
+
+    // Auto-Scan Logic
+    LaunchedEffect(seriesList, localSourcePath, scanned, workInfos) {
+         // Auto-scan runs, but we must exclude files currently being processed by workers
+         if (!scanned && seriesList.isNotEmpty()) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val sourceDir = if (localSourcePath.isNotBlank()) File(localSourcePath) else Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                
+                // Get list of files currently being handled by active workers
+                val activeFiles = workInfos
+                    .filter { !it.state.isFinished }
+                    .mapNotNull { it.progress.getString("fileName") }
+                    .toSet()
+
+                if (sourceDir.exists() && sourceDir.isDirectory) {
+                    val matching = sourceDir.listFiles()?.filter { file ->
+                        // Must be .mkv, match a series, AND NOT be in the activeFiles list
+                        // Also ignore "processed_" files which are temporary encoding artifacts
+                        file.isFile && 
+                        file.name.endsWith(".mkv") && 
+                        !file.name.startsWith("processed_") &&
+                        !file.name.endsWith(".part") &&
+                        !activeFiles.contains(file.name) &&
+                        seriesList.any { series ->
+                             file.name.contains(series.fileNameMatch, ignoreCase = true)
+                        }
+                    } ?: emptyList()
+                    
+                    if (matching.isNotEmpty()) {
+                         foundFiles = matching
+                         showScanDialog = true
+                    }
+                }
+            }
+            scanned = true 
+        }
+    }
+    
+    // ... (Notifications implementation skipped for brevity, assumed unchanged) ...
+    // ... (Permission Launcher assumed unchanged) ...
+    // ... (Schedule Background assumed unchanged) ...
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
         // Active Worker Progress
         if (activeWorker != null) {
             val progress = activeWorker.progress.getFloat("progress", 0f)
             val isBlocked = activeWorker.state == androidx.work.WorkInfo.State.BLOCKED
-            val status = if (isBlocked) "Queued (Waiting)..." else activeWorker.progress.getString("status") ?: "Working..."
+            val status = if (isBlocked) "Queued (Waiting)..." else activeWorker.progress.getString("status") ?: "Initializing..."
+            
+            // Extract filename from tags or output data if possible, or just use status
+            // The worker now puts filename IN status string.
             
             Card(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -211,9 +259,9 @@ fun DownloaderScreen() {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Task: ${activeWorker.id.toString().take(4)}...", style = MaterialTheme.typography.labelMedium)
+                        Text("Active Download", style = MaterialTheme.typography.labelMedium)
                         Spacer(modifier = Modifier.height(4.dp))
-                        if (isBlocked) {
+                         if (isBlocked) {
                              LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.tertiary)
                         } else {
                              LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth())
@@ -229,21 +277,29 @@ fun DownloaderScreen() {
             }
         }
         
-        // Debug/Reset Queue Button
-        OutlinedButton(
-            onClick = { 
-                workManager.cancelUniqueWork("gofile_download_queue") 
-                workManager.pruneWork()
-                android.widget.Toast.makeText(context, "Queue Force Cleared", android.widget.Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
-        ) {
-            Text("Force Clear Queue")
+        // Fetch Queue Status (if items are waiting to be fetched)
+        if (fetchQueue.isNotEmpty()) {
+             Card(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Queue: ${fetchQueue.size} items waiting...", style = MaterialTheme.typography.labelMedium)
+                    fetchQueue.forEachIndexed { index, item ->
+                        if (index < 3) {
+                             Text("${index + 1}. ${item.first.title}", style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                        }
+                    }
+                    if (fetchQueue.size > 3) {
+                        Text("+ ${fetchQueue.size - 3} more", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
         }
+
     
         // ... (Rest of UI)
         // ... (Existing code for lazy column etc)
-
         // ... (Header and Manual Override UI - unchanged)
         
         Spacer(modifier = Modifier.height(8.dp))
@@ -265,6 +321,10 @@ fun DownloaderScreen() {
                     },
                     onDownloadNewest = {
                         scope.launch {
+                            // Instead of immediate fetch, we check listing first
+                            // ... existing listing logic ...
+                            // BUT inside the listener when ITEM IS FOUND:
+                            
                             isLoading = true
                             currentLinks = emptyList()
                             loadingMessage = "Initializing..."
@@ -287,19 +347,16 @@ fun DownloaderScreen() {
                                         val firstItem = items.first()
                                         currentLinks = listOf(firstItem)
                                         
-                                        // Auto Download Logic
+                                        // Auto Download Logic (QUEUEING)
                                         if (autoDownloadGofile) {
                                             val goFileLink = firstItem.hostLinks.entries.find { it.key.contains("GoFile", true) }?.value
                                             
                                             if (goFileLink != null) {
-                                                 loadingMessage = "Analyzing GoFile link..."
-                                                 extractionItemTitle = firstItem.title
-                                                 extractionUrl = goFileLink
-                                                 extractionSeries = series
-                                                 // WebView will handle the rest via callback
-                                                 // Don't set showLinksDialog yet
+                                                // ADD TO FETCH QUEUE instead of immediate fetch
+                                                fetchQueue.add(Triple(firstItem, series, groups))
+                                                android.widget.Toast.makeText(context, "Added to Queue: ${firstItem.title}", android.widget.Toast.LENGTH_SHORT).show()
+                                                isLoading = false
                                             } else {
-                                                // No GoFile link, just show dialog
                                                 showLinksDialog = true
                                                 isLoading = false
                                             }
@@ -312,14 +369,14 @@ fun DownloaderScreen() {
                                 }
                             }
                             
-                            if (currentLinks.isEmpty()) {
+                             if (currentLinks.isEmpty()) {
                                 android.widget.Toast.makeText(context, "No releases found.", android.widget.Toast.LENGTH_SHORT).show()
                                 isLoading = false
                             }
-                            
-                            // If auto-download triggered, isLoading remains true until callback
                         }
                     },
+                    // ... onDownloadAll (same logic but probably default to Dialog) ...
+
                     onDownloadAll = {
                          scope.launch {
                             isLoading = true

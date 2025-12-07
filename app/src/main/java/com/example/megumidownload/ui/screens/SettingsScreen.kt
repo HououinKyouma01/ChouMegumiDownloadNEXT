@@ -28,6 +28,9 @@ fun SettingsScreen() {
     val context = LocalContext.current
     val configManager = remember { ConfigManager(context) }
     val seriesManager = remember { SeriesManager(context) }
+    // Cast context to ComponentActivity if possible, or handle gracefully (MainActivity passes it anyway?)
+    // Actually, simple instantiation:
+    val permissionManager = remember { com.example.megumidownload.PermissionManager(context as androidx.activity.ComponentActivity) }
     val scope = rememberCoroutineScope()
 
     val host by configManager.host.collectAsState(initial = "")
@@ -59,7 +62,58 @@ fun SettingsScreen() {
         
         androidx.compose.foundation.lazy.LazyColumn {
             item {
+
                 SettingsSection("General") {
+                    // Permissions Check
+                    val hasStorage = remember(permissionManager) { permissionManager.hasStoragePermission() }
+                    val hasNotification = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                        androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    } else {
+                        true
+                    }
+                    
+                    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                        Text("Permissions", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (hasStorage) Icons.Default.Add else Icons.Default.Search, // Using generic icons: Add=Check, Search=X (Need better icons but these are available)
+                                contentDescription = null,
+                                tint = if (hasStorage) androidx.compose.ui.graphics.Color.Green else androidx.compose.ui.graphics.Color.Red
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Storage Access: ${if (hasStorage) "Granted" else "Missing"}")
+                            if (!hasStorage) {
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(onClick = { permissionManager.requestStoragePermission() }) { Text("Grant") }
+                            }
+                        }
+                        
+                        // Notifications
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                             Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    if (hasNotification) Icons.Default.Add else Icons.Default.Search, 
+                                    contentDescription = null,
+                                    tint = if (hasNotification) androidx.compose.ui.graphics.Color.Green else androidx.compose.ui.graphics.Color.Red
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Notifications: ${if (hasNotification) "Granted" else "Missing"}")
+                                if (!hasNotification) {
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    // Normally we ask via Activity result, but for settings link:
+                                    Button(onClick = { 
+                                         val intent = android.content.Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                         context.startActivity(intent)
+                                    }) { Text("Settings") }
+                                }
+                            }
+                        }
+                    }
+                    Divider()
+                    Spacer(modifier = Modifier.height(8.dp))
+
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(
                             checked = autoStart,
@@ -312,13 +366,33 @@ fun SettingsScreen() {
                         
                         val checkInterval by configManager.rssCheckIntervalHours.collectAsState(initial = 1)
                         Column {
-                            Text("Check Interval: $checkInterval hours")
+                            Text("Network", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+            
+                            Spacer(modifier = Modifier.height(8.dp))
+            
+                            Text("RSS Check Interval (Hours): $checkInterval") // Changed to use existing checkInterval
                             Slider(
                                 value = checkInterval.toFloat(),
-                                onValueChange = { scope.launch { configManager.updateConfig(ConfigManager.RSS_CHECK_INTERVAL_HOURS, it.toInt()) } },
+                                onValueChange = { scope.launch { configManager.updateConfig(ConfigManager.RSS_CHECK_INTERVAL_HOURS, it.toInt().coerceAtLeast(1)) } }, // Changed to use updateConfig
                                 valueRange = 1f..24f,
-                                steps = 23
+                                steps = 22
                             )
+
+                            // Maintenance
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Text("Maintenance", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            OutlinedButton(
+                                onClick = {
+                                    val workManager = androidx.work.WorkManager.getInstance(context)
+                                    workManager.cancelUniqueWork("gofile_download_queue")
+                                    workManager.pruneWork()
+                                    android.widget.Toast.makeText(context, "Queue Force Cleared", android.widget.Toast.LENGTH_SHORT).show()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Force Clear Download Queue")
+                            }
                         }
                     }
                 }

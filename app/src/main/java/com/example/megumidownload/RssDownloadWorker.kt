@@ -22,6 +22,8 @@ class RssDownloadWorker(
 ) : CoroutineWorker(context, params) {
 
     private val gson = Gson()
+    
+
 
     override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val url = inputData.getString("url")
@@ -43,15 +45,35 @@ class RssDownloadWorker(
         try {
             if (url != null) {
                 // --- Auto-Download Mode ---
+                val downloadConfig = configManager.getDownloadConfig()
+                
+                // Determine download directory: Prefer localSourcePath if set, else Cache
+                val downloadDir = if (downloadConfig != null && downloadConfig.localSourcePath.isNotBlank()) {
+                     val f = File(downloadConfig.localSourcePath)
+                     if (f.exists() && f.isDirectory && f.canWrite()) f else applicationContext.cacheDir
+                } else {
+                     applicationContext.cacheDir
+                }
+
                 // Initialize Foreground
                 setForeground(createForegroundInfo(0f, "Starting $itemTitle..."))
                 
                 val cookie = inputData.getString("cookie")
                 val userAgent = inputData.getString("userAgent")
 
-                // Download to a known temp file
-                val tempName = "$itemTitle.mkv"
-                val tempFile = File(applicationContext.cacheDir, tempName)
+                // Sanitize filename to ensure it matches what file system allows (and what Scanner sees)
+                val safeTitle = itemTitle.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+
+                // Download to the chosen directory
+                // Use .part extension to prevent premature scanning/processing
+                val finalName = if (safeTitle.endsWith(".mkv", true)) safeTitle else "$safeTitle.mkv"
+                val tempName = "$finalName.part"
+                val tempFile = File(downloadDir, tempName)
+                val finalFile = File(downloadDir, finalName)
+
+                // Cleanup previous partials or existing finals if we are forcing a redownload (worker unique logic handles queue, but file system might have leftovers)
+                if (tempFile.exists()) tempFile.delete()
+                if (finalFile.exists()) finalFile.delete()
                 
                 try {
                     val client = okhttp3.OkHttpClient.Builder()
@@ -99,6 +121,8 @@ class RssDownloadWorker(
                     
                     // Safe length for progress if unknown
                     val totalLength = if (contentLength > 0) contentLength else 100 * 1024 * 1024 // arbitrary 100MB for progress calc if unknown
+                    
+                    var lastUpdate = System.currentTimeMillis()
 
                     while (input.read(buffer).also { count = it } != -1) {
                          if (isStopped) {
@@ -111,39 +135,49 @@ class RssDownloadWorker(
                         output.write(buffer, 0, count)
                         bytesRead += count
                         
-                        val rawProgress = if (contentLength > 0) {
-                            (bytesRead.toFloat() / contentLength.toFloat())
-                        } else {
-                            0f
+                        val now = System.currentTimeMillis()
+                        if (now - lastUpdate > 500) { // Throttle updates: Max 2 per second
+                            lastUpdate = now
+                            
+                            val rawProgress = if (contentLength > 0) {
+                                (bytesRead.toFloat() / contentLength.toFloat())
+                            } else {
+                                0f
+                            }
+                            
+                            // Map Download to 0% -> 95%
+                            val progress = rawProgress * 0.95f
+                            val progressMb = bytesRead / 1024 / 1024
+                            val totalMb = if (contentLength > 0) contentLength / 1024 / 1024 else 0
+                            
+                            val statusMsg = if (totalMb > 0L) "Downloading $itemTitle ($progressMb/${totalMb}MB)" else "Downloading $itemTitle ($progressMb MB)"
+                            
+                            // Update both Worker Progress (for UI) and Foreground Notification
+                            val progressData = workDataOf("progress" to progress, "status" to statusMsg)
+                            setProgress(progressData)
+                            setForeground(createForegroundInfo(progress, statusMsg))
                         }
-                        
-                        // Map Download to 0% -> 95%
-                        val progress = rawProgress * 0.95f
-                        val progressMb = bytesRead / 1024 / 1024
-                        val totalMb = if (contentLength > 0) contentLength / 1024 / 1024 else 0
-                        
-                        val statusMsg = if (totalMb > 0L) "Downloading $itemTitle ($progressMb/${totalMb}MB)" else "Downloading $itemTitle ($progressMb MB)"
-                        
-                        // Update both Worker Progress (for UI) and Foreground Notification
-                        val progressData = workDataOf("progress" to progress, "status" to statusMsg)
-                        setProgress(progressData)
-                        setForeground(createForegroundInfo(progress, statusMsg))
                     }
                     output.flush()
                     output.close()
                     input.close()
                     response.close()
                     
-                    // Now Process using DownloadManager
+                    // Download Complete.
+                    // We DO NOT rename to .mkv here. We pass the .part file to DownloadManager.
+                    // This ensures the Auto-Scanner (which ignores .part) doesn't pick it up during processing.
+                    
                     val processingMsg = "Processing $itemTitle..."
                     setProgress(workDataOf("progress" to 0.95f, "status" to processingMsg))
                     setForeground(createForegroundInfo(0.95f, processingMsg))
 
                     val downloadConfig = configManager.getDownloadConfig()
                     
+                    // Pass the .part file (tempFile) as the "localTempFile"
+                    // Pass the finalName (.mkv) as "originalFileName" so the logic knows what it IS
                     val success = downloadManager.processTempFile(
                         localTempFile = tempFile,
-                        originalFileName = tempName,
+                        originalFileName = finalName,
                         localDestBasePath = downloadConfig.localBasePath,
                         series = series
                     )
@@ -157,6 +191,7 @@ class RssDownloadWorker(
 
                 } catch (e: Exception) {
                     if (tempFile.exists()) tempFile.delete()
+                    if (finalFile.exists()) finalFile.delete()
                     return@withContext Result.failure(workDataOf("error" to "Download failed: ${e.message}"))
                 }
             } else if (filePath != null) {
@@ -188,6 +223,70 @@ class RssDownloadWorker(
             
         } catch (e: Exception) {
             return@withContext Result.failure(workDataOf("error" to "Exception: ${e.message}"))
+        }
+    }
+
+
+    override suspend fun getForegroundInfo(): androidx.work.ForegroundInfo {
+        try {
+            val itemTitle = inputData.getString("title") ?: "Download"
+            return createForegroundInfo(0f, "Starting $itemTitle...")
+        } catch (e: Exception) {
+            // Hard coded fallback 
+             val notification = androidx.core.app.NotificationCompat.Builder(applicationContext, "com.example.megumidownload.notification.DOWNLOAD_CHANNEL")
+                .setContentTitle("Megumi Downloader")
+                .setContentText("Resuming...")
+                .setSmallIcon(R.drawable.ic_launcher)
+                .build()
+             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                return androidx.work.ForegroundInfo(1337, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+             }
+             return androidx.work.ForegroundInfo(1337, notification)
+        }
+    }
+
+    private fun createForegroundInfo(progress: Float, status: String): androidx.work.ForegroundInfo {
+        val id = "com.example.megumidownload.notification.DOWNLOAD_CHANNEL"
+        
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(id, "Downloads", android.app.NotificationManager.IMPORTANCE_LOW)
+                val manager = applicationContext.getSystemService(android.app.NotificationManager::class.java)
+                manager.createNotificationChannel(channel)
+            }
+
+            val notification = androidx.core.app.NotificationCompat.Builder(applicationContext, id)
+                .setContentTitle("Megumi Downloader")
+                .setContentText(status)
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setOngoing(true)
+                .setProgress(100, (progress * 100).toInt(), false)
+                .setOnlyAlertOnce(true)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Cancel", androidx.work.WorkManager.getInstance(applicationContext).createCancelPendingIntent(getId()))
+                .build()
+
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                return androidx.work.ForegroundInfo(
+                    1337, 
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+            }
+            return androidx.work.ForegroundInfo(1337, notification)
+        } catch (e: Exception) {
+             val notification = androidx.core.app.NotificationCompat.Builder(applicationContext, id)
+                .setContentTitle("Megumi Downloader")
+                .setContentText("Processing...")
+                .setSmallIcon(R.drawable.ic_launcher)
+                .build()
+             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                return androidx.work.ForegroundInfo(
+                    1337, 
+                    notification,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                )
+             }
+             return androidx.work.ForegroundInfo(1337, notification)
         }
     }
 }
