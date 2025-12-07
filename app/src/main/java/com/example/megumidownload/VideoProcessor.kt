@@ -126,7 +126,7 @@ class VideoProcessor(private val context: Context) {
         // 6. Re-mux using FFmpeg
         ProgressRepository.updateProgress(inputMkv.name, "Muxing", 0.95f)
         Log.d(TAG, "Muxing to ${outputMkv.absolutePath}")
-        val muxSession = FFmpegKit.execute("-i \"${inputMkv.absolutePath}\" -i \"${adjustedSubtitleFile.absolutePath}\" -map 0:v -map 0:a -map 1 -c copy -c:s ass \"${outputMkv.absolutePath}\" -y")
+        val muxSession = FFmpegKit.execute("-i \"${inputMkv.absolutePath}\" -i \"${adjustedSubtitleFile.absolutePath}\" -map 0:v -map 0:a -map 1 -c copy -c:s ass -disposition:s:0 default \"${outputMkv.absolutePath}\" -y")
         
         if (!ReturnCode.isSuccess(muxSession.returnCode)) {
             Log.e(TAG, "Failed to mux. Output: ${muxSession.allLogsAsString}")

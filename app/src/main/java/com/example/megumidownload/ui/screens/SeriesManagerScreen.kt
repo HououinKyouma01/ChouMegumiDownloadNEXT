@@ -395,12 +395,12 @@ fun SeriesManagerScreen() {
         GlobalSyncDialog(
             seriesList = seriesList,
             onDismiss = { showGlobalSyncDialog = false },
-            onSync = { selectedSeries, isLocalToRemote, syncFilelist, syncReplace ->
+            onSync = { selectedSeries, isLocalToRemote, syncFilelist, syncReplace, syncEpisodes ->
                 showGlobalSyncDialog = false
                 showGlobalSyncProgressDialog = true
                 rememberConflictChoice = false // Reset for new sync
                 scope.launch {
-                    val options = SyncManager.SyncOptions(isLocalToRemote, syncFilelist, syncReplace)
+                    val options = SyncManager.SyncOptions(isLocalToRemote, syncFilelist, syncReplace, syncEpisodes)
                     val result = syncManager.syncAll(
                         seriesList = selectedSeries,
                         options = options,
@@ -698,13 +698,14 @@ fun AddSeriesDialog(onDismiss: () -> Unit, onAdd: (SeriesEntry) -> Unit) {
 fun GlobalSyncDialog(
     seriesList: List<SeriesEntry>,
     onDismiss: () -> Unit,
-    onSync: (List<SeriesEntry>, Boolean, Boolean, Boolean) -> Unit
+    onSync: (List<SeriesEntry>, Boolean, Boolean, Boolean, Boolean) -> Unit
 ) {
     // State for selection
     val selectionStates = remember { mutableStateListOf<Boolean>().apply { addAll(seriesList.map { true }) } }
     var isLocalToRemote by remember { mutableStateOf(false) } // Default Remote -> Local
     var syncFilelist by remember { mutableStateOf(true) }
     var syncReplace by remember { mutableStateOf(true) }
+    var syncEpisodes by remember { mutableStateOf(true) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxHeight(0.9f)) {
@@ -728,6 +729,10 @@ fun GlobalSyncDialog(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = syncReplace, onCheckedChange = { syncReplace = it })
                     Text("Sync replace.txt")
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = syncEpisodes, onCheckedChange = { syncEpisodes = it })
+                    Text("Sync Episodes (MKV)")
                 }
                 
                 Divider(modifier = Modifier.padding(vertical = 8.dp))
@@ -758,7 +763,7 @@ fun GlobalSyncDialog(
                     TextButton(onClick = onDismiss) { Text("Cancel") }
                     Button(onClick = {
                         val selectedSeries = seriesList.filterIndexed { index, _ -> selectionStates[index] }
-                        onSync(selectedSeries, isLocalToRemote, syncFilelist, syncReplace)
+                        onSync(selectedSeries, isLocalToRemote, syncFilelist, syncReplace, syncEpisodes)
                     }) { Text("Sync (${seriesList.filterIndexed { index, _ -> selectionStates[index] }.size})") }
                 }
             }

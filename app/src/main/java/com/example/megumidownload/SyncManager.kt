@@ -90,10 +90,15 @@ class SyncManager(
                     rootPath = rootPath,
                     localRoot = localRoot,
                     options = options,
-                    onProgress = { msg, fileProgress -> 
-                        // fileProgress is 0.0 to 1.0 for the current series
+                    onProgress = { msg, fileProgress, fileIndex, fileCount -> 
+                        // fileProgress is 0.0 to 1.0 for the current file
+                        // Calculate series progress (0.0 to 1.0)
+                        val seriesProgress = if (fileCount > 0) {
+                             (fileIndex.toFloat() + fileProgress) / fileCount.toFloat()
+                        } else 1f
+                        
                         // Map to overall progress
-                        val totalProgress = seriesProgressBase + (fileProgress * (1f / totalSeries))
+                        val totalProgress = seriesProgressBase + (seriesProgress * (1f / totalSeries))
                         val progressInt = (totalProgress * 100).toInt()
                         
                         onProgress(SyncProgress(
@@ -140,13 +145,7 @@ class SyncManager(
                 rootPath = rootPath,
                 localRoot = localRoot,
                 options = SyncOptions(), // Default options
-                onProgress = { msg, _ -> onProgress(msg) }, // Ignore float progress for single sync simple callback? Or update it?
-                // The caller of syncSeries expects (String) -> Unit.
-                // But SingleSeriesSyncDialog uses syncAll internally now!
-                // Wait, syncSeries is used by... nothing?
-                // Let's check usages. SingleSeriesSyncDialog calls syncAll with list of 1.
-                // So syncSeries might be unused or legacy.
-                // I'll keep it compatible but ignore progress float for now.
+                onProgress = { msg, _, _, _ -> onProgress(msg) }, // Ignore details for single sync legacy callback
                 onConflict = onConflict
             )
         } catch (e: Exception) {
@@ -208,7 +207,7 @@ class SyncManager(
         rootPath: String,
         localRoot: String,
         options: SyncOptions,
-        onProgress: (String, Float) -> Unit, // Changed to accept progress float (0.0 - 1.0)
+        onProgress: (String, Float, Int, Int) -> Unit, // msg, fileProgress, fileIndex, fileCount
         onConflict: suspend (File, SmbClientWrapper.SmbFile) -> Boolean
     ): SyncResult {
         val seriesFolder = series.folderName
@@ -225,10 +224,10 @@ class SyncManager(
              }
         }
 
-        onProgress("Listing local files...", 0f)
+        onProgress("Listing local files...", 0f, 0, 1)
         val localFiles = localSeriesDir.listFiles()?.toList() ?: emptyList()
         
-        onProgress("Listing remote files...", 0f)
+        onProgress("Listing remote files...", 0f, 0, 1)
         val remoteFiles = try {
             smbClient.listFiles(remoteSeriesPath)
         } catch (e: Exception) {
@@ -236,54 +235,90 @@ class SyncManager(
             emptyList()
         }
         
+        // Filter out directories now to get accurate count
+        val localFilesOnly = localFiles.filter { !it.isDirectory }
+        val remoteFilesOnly = remoteFiles.filter { !it.isDirectory }
+
+        onProgress("Starting sync...", 0f, 0, 1)
+
         if (options.isLocalToRemote) {
             // Sync Local -> Remote (Upload)
-            for (file in localFiles) {
-                if (file.isDirectory) continue
-                
-                // Apply selectedFiles filter for episodes
-                if (file.name.endsWith(".mkv") && options.selectedFiles != null && !options.selectedFiles.contains(file.name)) {
-                    continue
-                }
-
-                val remoteFile = remoteFiles.find { it.name == file.name }
+            val filesToSync = localFilesOnly
+            val totalFiles = filesToSync.size
+            
+            for ((index, file) in filesToSync.withIndex()) {
+                val remoteFile = remoteFilesOnly.find { it.name == file.name }
                 
                 if (remoteFile != null) {
                     // Conflict / Update check
                     if (file.name.endsWith(".mkv")) {
                         if (options.syncEpisodes) {
+                            // Apply selectedFiles filter for episodes
+                            if (options.selectedFiles != null && !options.selectedFiles.contains(file.name)) {
+                                onProgress("Skipping ${file.name} (Not Selected)", 1f, index, totalFiles)
+                                continue
+                            }
+
                             if (file.length() != remoteFile.size) {
                                  val overwrite = onConflict(file, remoteFile)
                                  if (overwrite) {
-                                     onProgress("Uploading ${file.name}...", 0f)
+                                     onProgress("Uploading ${file.name}...", 0f, index, totalFiles)
                                      smbClient.uploadFile(file, "$remoteSeriesPath/${file.name}") { progress ->
-                                         onProgress("Uploading ${file.name}...", progress)
+                                         onProgress("Uploading ${file.name}...", progress, index, totalFiles)
                                      }
                                  } else {
-                                     onProgress("Skipping ${file.name}", 0f)
+                                     onProgress("Skipping ${file.name}", 1f, index, totalFiles)
                                  }
+                            } else {
+                                // Identical
+                                onProgress("Skipping ${file.name} (Identical)", 1f, index, totalFiles)
                             }
+                        } else {
+                             onProgress("Skipping ${file.name} (Episodes Disabled)", 1f, index, totalFiles)
                         }
                     } else if (file.name == "filelist.txt" && options.syncFilelist) {
-                        onProgress("Merging filelist.txt...", 0f)
+                        onProgress("Merging filelist.txt...", 0f, index, totalFiles)
                         mergeFilelist(file, "$remoteSeriesPath/${file.name}")
+                        onProgress("Merged filelist.txt", 1f, index, totalFiles)
                     } else if (file.name == "replace.txt" && options.syncReplace) {
-                        if (file.length() > remoteFile.size) {
-                            onProgress("Updating replace.txt...", 0f)
-                            smbClient.uploadFile(file, "$remoteSeriesPath/${file.name}")
+                        // For replace.txt, always check content difference if sizes are different or if we want to be thorough
+                        // For simplicity, if sizes differ, assume conflict and ask.
+                        // Or, if remote is older, upload. If local is older, download.
+                        // For now, if local is newer/different, upload.
+                        if (file.length() != remoteFile.size) { // Simple size check for now
+                            val overwrite = onConflict(file, remoteFile) // Treat as conflict
+                            if (overwrite) {
+                                onProgress("Updating replace.txt...", 0f, index, totalFiles)
+                                smbClient.uploadFile(file, "$remoteSeriesPath/${file.name}")
+                                onProgress("Updated replace.txt", 1f, index, totalFiles)
+                            } else {
+                                onProgress("Skipping replace.txt", 1f, index, totalFiles)
+                            }
+                        } else {
+                            onProgress("Skipping replace.txt (Identical)", 1f, index, totalFiles)
                         }
+                    } else {
+                        onProgress("Skipping ${file.name}", 1f, index, totalFiles)
                     }
                 } else {
                     // New file
                     if ((file.name == "filelist.txt" && !options.syncFilelist) || (file.name == "replace.txt" && !options.syncReplace)) {
+                        onProgress("Skipping ${file.name}", 1f, index, totalFiles)
                         continue
                     }
                     if (file.name.endsWith(".mkv") && !options.syncEpisodes) {
+                        onProgress("Skipping ${file.name} (Episodes Disabled)", 1f, index, totalFiles)
                         continue
                     }
-                    onProgress("Uploading ${file.name}...", 0f)
+                    // Apply selectedFiles filter for episodes
+                    if (file.name.endsWith(".mkv") && options.selectedFiles != null && !options.selectedFiles.contains(file.name)) {
+                        onProgress("Skipping ${file.name} (Not Selected)", 1f, index, totalFiles)
+                        continue
+                    }
+
+                    onProgress("Uploading ${file.name}...", 0f, index, totalFiles)
                     smbClient.uploadFile(file, "$remoteSeriesPath/${file.name}") { progress ->
-                        onProgress("Uploading ${file.name}...", progress)
+                        onProgress("Uploading ${file.name}...", progress, index, totalFiles)
                     }
                 }
             }
@@ -292,24 +327,32 @@ class SyncManager(
              val enableGroups = configManager.enableGroups.first()
              val groups = if (enableGroups) loadGroups() else emptyList()
              
-             for (rFile in remoteFiles) {
-                if (rFile.isDirectory) continue
+             val filesToSync = remoteFilesOnly
+             val totalFiles = filesToSync.size
+
+             for ((index, rFile) in filesToSync.withIndex()) {
                 
                 val lFile = File(localSeriesDir, rFile.name)
                 
                 if ((rFile.name == "filelist.txt" && !options.syncFilelist) || (rFile.name == "replace.txt" && !options.syncReplace)) {
+                    onProgress("Skipping ${rFile.name}", 1f, index, totalFiles)
                     continue
                 }
                 if (rFile.name.endsWith(".mkv")) {
-                    if (!options.syncEpisodes) continue
+                    if (!options.syncEpisodes) {
+                        onProgress("Skipping ${rFile.name} (Eps Disabled)", 1f, index, totalFiles)
+                        continue
+                    }
                     if (enableGroups && !isFileAllowedByGroups(rFile.name, groups)) {
                         android.util.Log.d("SyncManager", "Skipping ${rFile.name} (Group filter)")
+                        onProgress("Skipping ${rFile.name} (Group Filter)", 1f, index, totalFiles)
                         continue
                     }
                     
                     // Apply selectedFiles filter
                     if (options.selectedFiles != null && !options.selectedFiles.contains(rFile.name)) {
                         android.util.Log.d("SyncManager", "Skipping ${rFile.name} (Not selected)")
+                        onProgress("Skipping ${rFile.name} (Not Selected)", 1f, index, totalFiles)
                         continue
                     }
                 }
@@ -329,7 +372,7 @@ class SyncManager(
                             if (localContent != remoteContent) {
                                 true
                             } else {
-                                onProgress("replace.txt identical, skipping.", 0f)
+                                onProgress("replace.txt identical, skipping.", 1f, index, totalFiles)
                                 false
                             }
                         } catch (e: Exception) {
@@ -343,18 +386,20 @@ class SyncManager(
                     if (isConflict) {
                          val overwrite = onConflict(lFile, rFile)
                          if (overwrite) {
-                             onProgress("Downloading ${rFile.name}...", 0f)
+                             onProgress("Downloading ${rFile.name}...", 0f, index, totalFiles)
                              smbClient.downloadFile(rFile.path, lFile) { progress ->
-                                 onProgress("Downloading ${rFile.name}...", progress)
+                                 onProgress("Downloading ${rFile.name}...", progress, index, totalFiles)
                              }
                          } else {
-                             onProgress("Skipping ${rFile.name}", 0f)
+                             onProgress("Skipping ${rFile.name}", 1f, index, totalFiles)
                          }
+                    } else {
+                        onProgress("Skipping ${rFile.name} (Identical)", 1f, index, totalFiles)
                     }
                 } else {
-                     onProgress("Downloading ${rFile.name}...", 0f)
+                     onProgress("Downloading ${rFile.name}...", 0f, index, totalFiles)
                      smbClient.downloadFile(rFile.path, lFile) { progress ->
-                         onProgress("Downloading ${rFile.name}...", progress)
+                         onProgress("Downloading ${rFile.name}...", progress, index, totalFiles)
                      }
                 }
             }
