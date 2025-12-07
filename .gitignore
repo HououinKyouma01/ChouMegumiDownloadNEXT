@@ -50,3 +50,15 @@ render.experimental.xml
 # OS Specific
 .DS_Store
 Thumbs.db
+
+
+# Security: Signing Keys
+*.jks
+*.keystore
+*.p12
+*.pfX
+
+# Desktop Distribution (KMP specific)
+/build/
+*/build/
+*.zip

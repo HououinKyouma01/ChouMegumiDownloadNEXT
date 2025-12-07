@@ -1,6 +1,69 @@
+buildscript {
+    dependencies {
+        classpath("com.guardsquare:proguard-gradle:7.5.0")
+    }
+}
+
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.multiplatform")
+    id("org.jetbrains.compose")
+}
+
+kotlin {
+    androidTarget {
+        compilations.all {
+            kotlinOptions {
+                jvmTarget = "1.8"
+            }
+        }
+    }
+    
+    jvm("desktop")
+    
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                implementation(compose.runtime)
+                implementation(compose.foundation)
+                implementation(compose.material3)
+                implementation(compose.ui)
+                implementation(compose.components.resources)
+                implementation("org.jetbrains.androidx.navigation:navigation-compose:2.7.0-alpha07")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+                implementation("com.google.code.gson:gson:2.10.1")
+                // SSHJ & SMBJ are Pure Java/JVM, so they can live in commonMain ONLY IF we strictly target JVM platforms.
+                // Since this app targets Android + Desktop (both JVM), this is valid.
+                implementation("com.hierynomus:sshj:0.38.0")
+                implementation("org.slf4j:slf4j-simple:2.0.9")
+                implementation("com.hierynomus:smbj:0.11.5") {
+                    exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+                }
+                implementation("org.bouncycastle:bcprov-jdk18on:1.75")
+                // OkHttp is also JVM
+                implementation("com.squareup.okhttp3:okhttp:4.12.0")
+            }
+        }
+        val androidMain by getting {
+            dependencies {
+                implementation("androidx.activity:activity-compose:1.8.2")
+                implementation("androidx.compose.runtime:runtime-livedata:1.6.0")
+                implementation("androidx.appcompat:appcompat:1.6.1")
+                implementation("androidx.core:core-ktx:1.12.0")
+                implementation("androidx.work:work-runtime-ktx:2.9.0")
+                implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
+                implementation("androidx.datastore:datastore-preferences:1.0.0")
+                implementation("com.arthenica:ffmpeg-kit-full-gpl:6.0-2.LTS")
+
+            }
+        }
+        val desktopMain by getting {
+            dependencies {
+                implementation(compose.desktop.currentOs)
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.0")
+            }
+        }
+    }
 }
 
 android {
@@ -9,20 +72,11 @@ android {
 
     defaultConfig {
         applicationId = "com.example.megumidownload"
-        minSdk = 26 // Android 8.0+
+        minSdk = 26
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        vectorDrawables {
-            useSupportLibrary = true
-        }
-        ndk {
-            abiFilters += "arm64-v8a"
-        }
     }
-
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -32,9 +86,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
-    }
-    kotlinOptions {
-        jvmTarget = "1.8"
     }
     buildFeatures {
         compose = true
@@ -47,55 +98,28 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    sourceSets {
+        getByName("main") {
+            manifest.srcFile("src/androidMain/AndroidManifest.xml")
+            res.srcDirs("src/androidMain/res")
+            assets.srcDirs("src/androidMain/assets")
+        }
+    }
 }
 
-dependencies {
-
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.6.2")
-    implementation("androidx.activity:activity-compose:1.8.1")
-    implementation(platform("androidx.compose:compose-bom:2023.08.00"))
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
-    implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.runtime:runtime-livedata") // Added for WorkManager observation
-    
-    // Navigation
-    implementation("androidx.navigation:navigation-compose:2.7.7")
-
-    // WorkManager
-    implementation("androidx.work:work-runtime-ktx:2.9.0")
-
-    // SSHJ for SFTP
-    implementation("com.hierynomus:sshj:0.38.0")
-    implementation("org.slf4j:slf4j-simple:2.0.9") // SSHJ needs a logger
-    
-    // SMBJ for SMB Sync
-    // SMBJ for SMB Sync
-    implementation("com.hierynomus:smbj:0.11.5") {
-        exclude(group = "org.bouncycastle", module = "bcprov-jdk15on")
+compose.desktop {
+    application {
+        mainClass = "com.example.megumidownload.MainKt"
+        nativeDistributions {
+            targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb)
+            packageName = "MegumiDownload"
+            packageVersion = "1.0.0"
+        }
+        buildTypes.release.proguard {
+            version.set("7.5.0")
+            configurationFiles.from(project.file("compose-desktop.pro"))
+            obfuscate.set(false)
+        }
     }
-    // Bouncy Castle (jdk18on required by SSHJ)
-    implementation("org.bouncycastle:bcprov-jdk18on:1.75")
-
-    // FFmpeg-Kit (Full GPL for maximum codec support)
-    implementation("com.arthenica:ffmpeg-kit-full-gpl:6.0-2.LTS")
-
-    // Gson
-    implementation("com.google.code.gson:gson:2.10.1")
-
-    // DataStore for Settings
-    implementation("androidx.datastore:datastore-preferences:1.0.0")
-
-    // OkHttp for faster downloads
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2023.08.00"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
-    debugImplementation("androidx.compose.ui:ui-tooling")
-    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
