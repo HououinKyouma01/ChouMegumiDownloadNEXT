@@ -1,0 +1,9 @@
+# Enforce Unix line endings for most files
+* text=auto eol=lf
+
+# Windows scripts must keep CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Linux scripts must keep LF
+gradlew text eol=lf
