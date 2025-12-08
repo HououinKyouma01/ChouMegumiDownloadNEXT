@@ -41,6 +41,8 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
         private val RSS_CHECK_INTERVAL_HOURS = intPreferencesKey("rss_check_interval_hours")
         private val RSS_LAST_CHECK_TIME = longPreferencesKey("rss_last_check_time")
         private val DEBUG_LOGS = booleanPreferencesKey("debug_logs")
+        private val PARALLEL_DOWNLOADS = intPreferencesKey("parallel_downloads")
+        private val BATCH_PROCESSING = booleanPreferencesKey("batch_processing")
     }
 
     override val host: Flow<String> = context.dataStore.data.map { it[HOST] ?: "" }
@@ -70,6 +72,8 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
     override val rssCheckIntervalHours: Flow<Int> = context.dataStore.data.map { it[RSS_CHECK_INTERVAL_HOURS] ?: 1 }
     override val rssLastCheckTime: Flow<Long> = context.dataStore.data.map { it[RSS_LAST_CHECK_TIME] ?: 0L }
     override val debugLogs: Flow<Boolean> = context.dataStore.data.map { it[DEBUG_LOGS] ?: false }
+    override val parallelDownloads: Flow<Int> = context.dataStore.data.map { it[PARALLEL_DOWNLOADS] ?: 1 }
+    override val batchProcessing: Flow<Boolean> = context.dataStore.data.map { it[BATCH_PROCESSING] ?: false }
 
     init {
        // Watch for debug flag changes and update Logger
@@ -116,6 +120,8 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
             ConfigKeys.RSS_CHECK_INTERVAL_HOURS -> RSS_CHECK_INTERVAL_HOURS as Preferences.Key<T>
             ConfigKeys.RSS_LAST_CHECK_TIME -> RSS_LAST_CHECK_TIME as Preferences.Key<T>
             ConfigKeys.DEBUG_LOGS -> DEBUG_LOGS as Preferences.Key<T>
+            ConfigKeys.PARALLEL_DOWNLOADS -> PARALLEL_DOWNLOADS as Preferences.Key<T>
+            ConfigKeys.BATCH_PROCESSING -> BATCH_PROCESSING as Preferences.Key<T>
             else -> throw IllegalArgumentException("Unknown key: ${key.keyName}")
         }
     }

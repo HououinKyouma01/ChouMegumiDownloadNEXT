@@ -88,6 +88,13 @@ class DesktopConfigManager : ConfigManager {
     private val _debugLogs = MutableStateFlow(false)
     override val debugLogs: Flow<Boolean> = _debugLogs.asStateFlow()
     
+    // Desktop Specific
+    private val _parallelDownloads = MutableStateFlow(1)
+    override val parallelDownloads: Flow<Int> = _parallelDownloads.asStateFlow()
+    
+    private val _batchProcessing = MutableStateFlow(false)
+    override val batchProcessing: Flow<Boolean> = _batchProcessing.asStateFlow()
+    
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
     
     init {
@@ -139,6 +146,9 @@ class DesktopConfigManager : ConfigManager {
         _autoSyncInterval.value = properties.getProperty(ConfigKeys.AUTO_SYNC_INTERVAL.keyName, "60").toLongOrNull() ?: 60L
         _rssCheckIntervalHours.value = properties.getProperty(ConfigKeys.RSS_CHECK_INTERVAL_HOURS.keyName, "1").toIntOrNull() ?: 1
         _rssLastCheckTime.value = properties.getProperty(ConfigKeys.RSS_LAST_CHECK_TIME.keyName, "0").toLongOrNull() ?: 0L
+        
+        _parallelDownloads.value = properties.getProperty(ConfigKeys.PARALLEL_DOWNLOADS.keyName, "1").toIntOrNull() ?: 1
+        _batchProcessing.value = properties.getProperty(ConfigKeys.BATCH_PROCESSING.keyName, "false").toBoolean()
     }
     
     private fun saveConfig() {
@@ -170,6 +180,9 @@ class DesktopConfigManager : ConfigManager {
         properties.setProperty(ConfigKeys.RSS_CHECK_INTERVAL_HOURS.keyName, _rssCheckIntervalHours.value.toString())
         properties.setProperty(ConfigKeys.AUTO_SYNC_INTERVAL.keyName, _autoSyncInterval.value.toString())
         properties.setProperty(ConfigKeys.RSS_LAST_CHECK_TIME.keyName, _rssLastCheckTime.value.toString())
+        
+        properties.setProperty(ConfigKeys.PARALLEL_DOWNLOADS.keyName, _parallelDownloads.value.toString())
+        properties.setProperty(ConfigKeys.BATCH_PROCESSING.keyName, _batchProcessing.value.toString())
 
         configFile.outputStream().use { properties.store(it, "Megumi Downloader Config") }
     }
@@ -202,6 +215,9 @@ class DesktopConfigManager : ConfigManager {
             ConfigKeys.RSS_CHECK_INTERVAL_HOURS -> _rssCheckIntervalHours.value = value as Int
             ConfigKeys.AUTO_SYNC_INTERVAL -> _autoSyncInterval.value = value as Long
             ConfigKeys.RSS_LAST_CHECK_TIME -> _rssLastCheckTime.value = value as Long
+            
+            ConfigKeys.PARALLEL_DOWNLOADS -> _parallelDownloads.value = value as Int
+            ConfigKeys.BATCH_PROCESSING -> _batchProcessing.value = value as Boolean
             else -> {}
         }
         saveConfig()

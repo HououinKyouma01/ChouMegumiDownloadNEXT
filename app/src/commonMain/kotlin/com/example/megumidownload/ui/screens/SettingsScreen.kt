@@ -215,6 +215,34 @@ fun SettingsScreen(
                         label = "Remote Path",
                         supportingText = "Root folder on SFTP server (e.g., /home/user/downloads)"
                     )
+                    
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Optimization (Desktop)", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+                    
+                    val parallelDownloads by configManager.parallelDownloads.collectAsState(initial = 1)
+                    val batchProcessing by configManager.batchProcessing.collectAsState(initial = false)
+                    
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = batchProcessing,
+                            onCheckedChange = { scope.launch { configManager.updateConfig(ConfigKeys.BATCH_PROCESSING, it) } }
+                        )
+                        Column {
+                            Text("Batch Downloading")
+                            Text("Download all files first, then process them sequentially.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    
+                    if (batchProcessing) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("Parallel Downloads: $parallelDownloads")
+                        Slider(
+                            value = parallelDownloads.toFloat(),
+                            onValueChange = { scope.launch { configManager.updateConfig(ConfigKeys.PARALLEL_DOWNLOADS, it.toInt()) } },
+                            valueRange = 1f..5f,
+                            steps = 3
+                        )
+                    }
                 }
             }
 

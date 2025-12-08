@@ -3,6 +3,7 @@ package com.example.megumidownload
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 object ProgressRepository {
     // Processing State (Android / Global)
@@ -22,6 +23,10 @@ object ProgressRepository {
     val processedFiles: StateFlow<Int> = _processedFiles.asStateFlow()
 
     // Download State (Desktop Optimization)
+    // Map of FileName -> Progress (0.0 to 1.0)
+    private val _activeDownloads = MutableStateFlow<Map<String, Float>>(emptyMap())
+    val activeDownloads: StateFlow<Map<String, Float>> = _activeDownloads.asStateFlow()
+
     private val _downloadState = MutableStateFlow<DownloadState>(DownloadState.Idle)
     val downloadState: StateFlow<DownloadState> = _downloadState.asStateFlow()
 
@@ -33,15 +38,42 @@ object ProgressRepository {
     }
 
     // Method for Downloader (Byte-based)
-    fun updateProgress(fileName: String, bytesRead: Long, totalBytes: Long) {
-        _downloadState.value = DownloadState.Downloading(fileName, bytesRead, totalBytes)
-        // Also update generic progress for Dashboard if needed?
-        // Let's assume Dashboard uses `downloadState` for new logic or `progress` for old logic.
-        // For now, keep them separate to avoid conflict, or sync them?
-        // Let's sync primarily for the UI that watches generic progress:
-        _currentFile.value = fileName
-        _currentStep.value = "Downloading"
-        _progress.value = if (totalBytes > 0) bytesRead.toFloat() / totalBytes.toFloat() else 0f
+    fun updateProgress(fileName: String, bytesRead: Long, totalBytes: Long, updatePrimary: Boolean = true) {
+        if (updatePrimary) {
+            _downloadState.value = DownloadState.Downloading(fileName, bytesRead, totalBytes)
+        }
+        
+        val progressFloat = if (totalBytes > 0) bytesRead.toFloat() / totalBytes.toFloat() else 0f
+        
+        // Update active downloads map (Atomic update)
+        _activeDownloads.update { current ->
+            val newMap = current.toMutableMap()
+            newMap[fileName] = progressFloat
+            newMap.toMap()
+        }
+
+        // Update generic single-file tracking (backward compatibility or main status)
+        if (updatePrimary) {
+            _currentFile.value = fileName
+            _currentStep.value = "Downloading"
+            _progress.value = progressFloat
+        }
+    }
+    
+    fun startDownload(fileName: String) {
+        _activeDownloads.update { current ->
+            val newMap = current.toMutableMap()
+            newMap[fileName] = 0f
+            newMap.toMap()
+        }
+    }
+    
+    fun endDownload(fileName: String) {
+        _activeDownloads.update { current ->
+            val newMap = current.toMutableMap()
+            newMap.remove(fileName)
+            newMap.toMap()
+        }
     }
 
     fun setTotalFiles(count: Int) {
@@ -57,6 +89,7 @@ object ProgressRepository {
         _currentStep.value = ""
         _progress.value = 0f
         _downloadState.value = DownloadState.Idle
+        _activeDownloads.value = emptyMap()
     }
     
     fun reset() {

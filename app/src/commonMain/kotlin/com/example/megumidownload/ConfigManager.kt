@@ -59,6 +59,8 @@ object ConfigKeys {
     val RSS_CHECK_INTERVAL_HOURS = ConfigKey.IntKey("rss_check_interval_hours")
     val RSS_LAST_CHECK_TIME = ConfigKey.LongKey("rss_last_check_time")
     val DEBUG_LOGS = ConfigKey.BooleanKey("debug_logs")
+    val PARALLEL_DOWNLOADS = ConfigKey.IntKey("parallel_downloads")
+    val BATCH_PROCESSING = ConfigKey.BooleanKey("batch_processing")
 }
 
 interface ConfigManager {
@@ -89,6 +91,8 @@ interface ConfigManager {
     val rssCheckIntervalHours: Flow<Int>
     val rssLastCheckTime: Flow<Long>
     val debugLogs: Flow<Boolean>
+    val parallelDownloads: Flow<Int>
+    val batchProcessing: Flow<Boolean>
 
     suspend fun <T> updateConfig(key: ConfigKey<T>, value: T)
     

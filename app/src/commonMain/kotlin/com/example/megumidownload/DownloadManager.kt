@@ -4,6 +4,11 @@ import com.example.megumidownload.viewmodel.LogType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.coroutineScope
 import java.io.File
 import java.util.regex.Pattern
 
@@ -16,12 +21,11 @@ class DownloadManager(
 ) {
     private val TAG = "DownloadManager"
 
-
     suspend fun startDownloadCycle(force: Boolean = false) = withContext(Dispatchers.IO) {
         log("Starting download cycle (Force=$force)...")
         
         val config = configManager.getDownloadConfig()
-        // Double check auto-start if not forced (source of truth check)
+        // Double check auto-start if not forced
         if (!force) {
             val autoStart = configManager.autoStart.first()
             if (!autoStart) {
@@ -43,6 +47,7 @@ class DownloadManager(
         }
 
         if (localOnly) {
+            // Local processing remains sequential as it's just move/copy/process
             if (localSourcePath.isBlank()) {
                 log("Local Source Path is missing. Please check settings.", LogType.ERROR)
                 return@withContext
@@ -75,6 +80,7 @@ class DownloadManager(
         for (file in files) {
             val matchedSeries = seriesList.find { file.name.contains(it.fileNameMatch, ignoreCase = true) }
             if (matchedSeries != null) {
+                // Local "download" is just copy, so we treat it as fetch + process immediately
                 processFile(null, file.name, sourcePath, destPath, matchedSeries)
             }
             ProgressRepository.incrementProcessedFiles()
@@ -83,14 +89,15 @@ class DownloadManager(
     }
 
     private suspend fun processRemoteFiles(host: String, user: String, pass: String, remotePath: String, localBasePath: String, localSourcePath: String) {
-        var sftp: SftpClientWrapper? = null
+        // We need a fresh scope or client for the listing
+        var mainSftp: SftpClientWrapper? = null
         try {
-            sftp = SftpClientWrapper(host = host, username = user, password = pass)
+            mainSftp = SftpClientWrapper(host = host, username = user, password = pass)
             log("Connecting to $host...")
-            sftp.connect()
+            mainSftp.connect()
             log("Connected.", LogType.SUCCESS)
             
-            val files = sftp.listFiles(remotePath)
+            val files = mainSftp.listFiles(remotePath)
             val mkvFiles = files.filter { it.endsWith(".mkv", ignoreCase = true) }
             
             log("Found ${mkvFiles.size} MKV files.")
@@ -98,25 +105,92 @@ class DownloadManager(
             
             val seriesList = seriesManager.getSeriesList()
             
-            for (fileName in mkvFiles) {
-                val matchedSeries = seriesList.find { fileName.contains(it.fileNameMatch, ignoreCase = true) }
-                
-                if (matchedSeries != null) {
-                    processFile(sftp, fileName, remotePath, localBasePath, matchedSeries, localSourcePath)
+            val filesToProcess = mkvFiles.mapNotNull { fileName ->
+                val matchedSeries = seriesManager.getSeriesList().find { fileName.contains(it.fileNameMatch, ignoreCase = true) }
+                if (matchedSeries != null) fileName to matchedSeries else null
+            }
+            
+            val parallelDownloads = configManager.parallelDownloads.first().coerceAtLeast(1)
+            val batchProcessing = configManager.batchProcessing.first()
+            
+            if (batchProcessing) {
+                log("Batch Processing Enabled. Parallel Downloads: $parallelDownloads")
+                // 1. Download Phase
+                val semaphore = Semaphore(parallelDownloads)
+                val downloadedFiles = mutableListOf<Triple<File, String, SeriesEntry>>() // TempFile, OriginalName, Series
+
+                coroutineScope {
+                    val deferredDownloads = filesToProcess.map { (fileName, series) ->
+                        async(Dispatchers.IO) {
+                           semaphore.withPermit {
+                               // Start tracking progress for this file
+                               ProgressRepository.startDownload(fileName)
+                               
+                               // Create a dedicated SFTP client for this thread/download
+                               val sftp = SftpClientWrapper(host = host, username = user, password = pass)
+                               try {
+                                   sftp.connect()
+                                   val tempFile = fetchFile(sftp, fileName, remotePath, localSourcePath, isBatch = true)
+                                   if (tempFile != null) {
+                                       synchronized(downloadedFiles) {
+                                           downloadedFiles.add(Triple(tempFile, fileName, series))
+                                       }
+                                       // Delete remote file immediately after successful download if desired? 
+                                       // Original logic deletes AFTER processing success.
+                                       // If we wait for all, we might carry many temp files.
+                                       // Let's stick to: Download ALL -> Process ALL.
+                                       // Remote deletion should probably happen after processing success?
+                                       // If we delete now, and processing fails later, we lost the file from remote.
+                                       // So we must NOT delete yet.
+                                   }
+                               } catch (e: Exception) {
+                                   log("Download failed for $fileName: ${e.message}", LogType.ERROR)
+                               } finally {
+                                   sftp.disconnect()
+                                   ProgressRepository.endDownload(fileName)
+                               }
+                           }
+                        }
+                    }
+                    deferredDownloads.awaitAll()
                 }
-                ProgressRepository.incrementProcessedFiles()
+                
+                log("Batch Download Complete. Starting Processing...")
+                
+                // 2. Processing Phase
+                // Sequential processing (less resource intensive for ffmpeg/mkvmerge) usually better
+                for ((tempFile, fileName, series) in downloadedFiles) {
+                     val success = processTempFile(tempFile, fileName, localBasePath, series)
+                     if (success) {
+                         try {
+                             mainSftp.delete("$remotePath/$fileName")
+                             log("Deleted remote file: $fileName")
+                         } catch (e: Exception) {
+                             log("Failed to delete remote file: ${e.message}", LogType.WARNING)
+                         }
+                     }
+                     ProgressRepository.incrementProcessedFiles()
+                }
+
+            } else {
+                // Traditional: Download #1 -> Process #1 -> Download #2...
+                for ((fileName, series) in filesToProcess) {
+                    processFile(mainSftp, fileName, remotePath, localBasePath, series, localSourcePath)
+                    ProgressRepository.incrementProcessedFiles()
+                }
             }
             
         } catch (e: Exception) {
             log("Error: ${e.message}", LogType.ERROR)
             e.printStackTrace()
         } finally {
-            sftp?.disconnect()
+            mainSftp?.disconnect()
             log("Disconnected.")
             ProgressRepository.reset()
         }
     }
 
+    // Legacy integrated method (Sequential)
     suspend fun processFile(
         sftp: SftpClientWrapper?,
         fileName: String,
@@ -127,7 +201,7 @@ class DownloadManager(
     ) {
         log("Processing $fileName for series ${series.folderName}...")
         
-        // Use localSourcePath as download destination if set, otherwise cacheDir
+        // 1. Fetch
         val tempDir = if (localSourcePath.isNotBlank()) {
             File(localSourcePath).apply { if (!exists()) mkdirs() }
         } else {
@@ -135,19 +209,20 @@ class DownloadManager(
         }
         val localTempFile = File(tempDir, fileName)
         
-        // 1. Fetch (Download or Copy)
-        log("Fetching $fileName...")
-        try {
-            if (sftp != null) {
+        var fetchSuccess = false
+        if (sftp != null) {
+             try {
+                // Re-use passed SFTP (Linear execution)
                 notificationService.showProgressNotification(fileName, "Downloading...", 0, 100, true)
                 var lastProgressTime = 0L
+                ProgressRepository.startDownload(fileName)
+                
                 sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath) { bytesRead, totalBytes ->
                      val now = System.currentTimeMillis()
-                     if (now - lastProgressTime > 100) { // Throttle updates (100ms for UI)
+                     if (now - lastProgressTime > 100) { 
                         lastProgressTime = now
                         ProgressRepository.updateProgress(fileName, bytesRead, totalBytes)
                         
-                        // Keep notification service for Android background/foreground support
                         val percentage = if (totalBytes > 0) ((bytesRead.toDouble() / totalBytes.toDouble()) * 100).toInt() else -1
                         val mbRead = bytesRead / 1024 / 1024
                         val mbTotal = totalBytes / 1024 / 1024
@@ -156,28 +231,30 @@ class DownloadManager(
                      }
                 }
                 notificationService.showNotification(fileName, "Download Complete")
-                ProgressRepository.setIdle()
-            } else {
-                // Local copy
-                val sourceFile = File(sourceBasePath, fileName)
-                if (sourceFile.exists()) {
-                    sourceFile.copyTo(localTempFile, overwrite = true)
-                } else {
-                    throw Exception("Source file not found: ${sourceFile.absolutePath}")
-                }
+                fetchSuccess = true
+            } catch (e: Exception) {
+                log("Fetch failed: ${e.message}", LogType.ERROR)
+                notificationService.showNotification("Download Failed", "Error downloading $fileName: ${e.message}")
+            } finally {
+                ProgressRepository.endDownload(fileName)
+                ProgressRepository.setIdle() // Clear single-file progress
             }
-            log("Fetch complete.", LogType.SUCCESS)
-        } catch (e: Exception) {
-            log("Fetch failed: ${e.message}", LogType.ERROR)
-            notificationService.showNotification("Download Failed", "Error downloading $fileName: ${e.message}")
-            return
+        } else {
+             // Local copy
+             val sourceFile = File(sourceBasePath, fileName)
+             if (sourceFile.exists()) {
+                 sourceFile.copyTo(localTempFile, overwrite = true)
+                 fetchSuccess = true
+             }
         }
-        
-        // Delegate processing
+
+        if (!fetchSuccess) return
+
+        // 2. Process
         val success = processTempFile(localTempFile, fileName, localDestBasePath, series)
         
         if (success) {
-            // Delete remote file or local source file
+            // Delete remote/source
             if (sftp != null) {
                 try {
                     sftp.delete("$sourceBasePath/$fileName")
@@ -186,20 +263,46 @@ class DownloadManager(
                     log("Failed to delete remote file: ${e.message}", LogType.WARNING)
                 }
             } else {
-                // Local source file deletion
-                try {
-                    val sourceFile = File(sourceBasePath, fileName)
-                    if (sourceFile.exists()) {
-                        if (sourceFile.delete()) {
-                            log("Deleted local source file: $fileName")
-                        } else {
-                            log("Failed to delete local source file: $fileName", LogType.WARNING)
-                        }
-                    }
-                } catch (e: Exception) {
-                    log("Failed to delete local source file: ${e.message}", LogType.WARNING)
-                }
+                 val sourceFile = File(sourceBasePath, fileName)
+                 if (sourceFile.exists() && sourceFile.delete()) {
+                     log("Deleted local source file: $fileName")
+                 }
             }
+        }
+    }
+    
+    // New Helper: Just Fetch
+    private suspend fun fetchFile(
+        sftp: SftpClientWrapper,
+        fileName: String,
+        sourceBasePath: String,
+        localSourcePath: String,
+        isBatch: Boolean = false
+    ): File? {
+        val tempDir = if (localSourcePath.isNotBlank()) {
+            File(localSourcePath).apply { if (!exists()) mkdirs() }
+        } else {
+            cacheDir
+        }
+        val localTempFile = File(tempDir, fileName)
+        
+        log("Downloading $fileName...")
+        return try {
+            var lastProgressTime = 0L
+            sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath) { bytesRead, totalBytes ->
+                 val now = System.currentTimeMillis()
+                 if (now - lastProgressTime > 200) {  // Smoother updates for UI
+                    lastProgressTime = now
+                    // Only update primary global state if NOT in batch mode to prevent flickering
+                    ProgressRepository.updateProgress(fileName, bytesRead, totalBytes, updatePrimary = !isBatch)
+                 }
+            }
+            log("Download complete: $fileName", LogType.SUCCESS)
+            localTempFile
+        } catch (e: Exception) {
+            log("Error downloading $fileName: ${e.message}", LogType.ERROR)
+            if (localTempFile.exists()) localTempFile.delete()
+            null
         }
     }
 
@@ -256,7 +359,7 @@ class DownloadManager(
                 connection.readTimeout = 5000
                 val content = connection.getInputStream().bufferedReader().readText()
                 
-                // Verify syntax (simple check: non-empty lines must contain '|')
+                // Verify syntax
                 val lines = content.lines()
                 val invalidLines = lines.filter { it.isNotBlank() && !it.trim().startsWith("#") && !it.contains("|") }
                 
@@ -264,7 +367,7 @@ class DownloadManager(
                     localReplaceFile.writeText(content)
                     log("Updated replace.txt from URL.", LogType.SUCCESS)
                 } else {
-                    log("Invalid syntax in remote replace file. Keeping existing one. Invalid lines: ${invalidLines.take(3)}", LogType.WARNING)
+                    log("Invalid syntax in remote replace file. Keeping existing one.", LogType.WARNING)
                 }
             } catch (e: Exception) {
                 log("Failed to download replace file from URL: ${e.message}", LogType.WARNING)
@@ -280,7 +383,6 @@ class DownloadManager(
         // We process if fixTiming is ON OR if we have a replace file
         if (series.fixTiming || replaceFile != null) {
              log("Processing video (Timing: ${series.fixTiming}, Replace: ${replaceFile != null})...")
-             // If fixTiming is false, offset is 0. If true, we need logic (currently 0 as placeholder)
              val offset = if (series.fixTiming) 0L else 0L 
              
              val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile, series.fixTiming)
@@ -307,7 +409,6 @@ class DownloadManager(
             try {
                 val fileList = File(destDir, "filelist.txt")
                 fileList.appendText("$originalFileName ($newName)\n")
-                log("Updated filelist.txt")
             } catch (e: Exception) {
                 log("Failed to update filelist.txt: ${e.message}", LogType.ERROR)
             }
@@ -320,9 +421,6 @@ class DownloadManager(
     }
 
     private fun log(message: String, type: LogType = LogType.INFO) {
-        // Always log to Repository for INFO, SUCCESS, WARNING, ERROR.
-        // We only want to hide verbose low-level debugs if we had them.
-        // Since LogType only has INFO, WARNING, ERROR, SUCCESS, we show them all.
         LogRepository.addLog(message, type)
         Logger.d(TAG, message)
     }

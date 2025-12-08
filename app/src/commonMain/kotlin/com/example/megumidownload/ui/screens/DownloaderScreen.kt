@@ -375,32 +375,7 @@ fun DownloaderScreen(
         }
         }
         
-        // Active Download Progress Bar
-        val downloadState by com.example.megumidownload.ProgressRepository.downloadState.collectAsState()
-        
-        if (downloadState is com.example.megumidownload.ProgressRepository.DownloadState.Downloading) {
-            val state = downloadState as com.example.megumidownload.ProgressRepository.DownloadState.Downloading
-            
-            Card(
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Downloading: ${state.fileName}", style = MaterialTheme.typography.labelMedium)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = state.progress,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        "${(state.currentBytes / 1024 / 1024)} MB / ${(state.totalBytes / 1024 / 1024)} MB", 
-                        style = MaterialTheme.typography.bodySmall,
-                        modifier = Modifier.align(Alignment.End)
-                    )
-                }
-            }
-        } // End if (downloadState)
+
         
         // No extra brace here!
 

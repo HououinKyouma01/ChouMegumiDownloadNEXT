@@ -5,6 +5,8 @@ import kotlinx.coroutines.withContext
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
+import net.schmizz.sshj.xfer.TransferListener
+import net.schmizz.sshj.common.StreamCopier
 import java.io.File
 
 class SftpClientWrapper(
@@ -63,29 +65,21 @@ class SftpClientWrapper(
             Logger.d("SftpWrapper", "Starting optimized native transfer: $remotePath")
             
             val transfer = sftpClient.fileTransfer
-            val localFile = File(localPath)
-            
-            // Custom LocalDestFile to capture progress stream
-            val dest = object : net.schmizz.sshj.xfer.FileSystemFile(localFile) {
-                override fun getOutputStream(): java.io.OutputStream {
-                    val fileOut = super.getOutputStream()
-                    return object : java.io.FilterOutputStream(fileOut) {
-                        var transferred = 0L
-                        override fun write(b: Int) {
-                            super.write(b)
-                            transferred++
-                            onProgress(transferred, totalSize)
-                        }
-                        override fun write(b: ByteArray, off: Int, len: Int) {
-                            super.write(b, off, len)
-                            transferred += len
+            val listener = object : TransferListener {
+                override fun directory(name: String?): TransferListener {
+                    return this
+                }
+                override fun file(name: String?, size: Long): StreamCopier.Listener {
+                    return object : StreamCopier.Listener {
+                        override fun reportProgress(transferred: Long) {
                             onProgress(transferred, totalSize)
                         }
                     }
                 }
             }
-            
-            transfer.download(remotePath, dest)
+
+            transfer.transferListener = listener
+            transfer.download(remotePath, localPath)
             
             Logger.d("SftpWrapper", "Transfer finished.")
             onProgress(totalSize, totalSize)
