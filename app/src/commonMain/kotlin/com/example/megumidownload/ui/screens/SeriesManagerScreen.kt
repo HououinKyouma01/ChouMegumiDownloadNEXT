@@ -38,6 +38,12 @@ import com.example.megumidownload.SeriesManager
 import com.example.megumidownload.BackgroundScheduler
 import java.io.File
 import kotlinx.coroutines.launch
+import com.example.megumidownload.RssItem
+import com.example.megumidownload.CharacterNameFetcher
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 
 @Composable
@@ -549,6 +555,10 @@ fun SeriesManagerScreen(
 fun ReplaceEditorDialog(initialContent: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var content by remember { mutableStateOf(initialContent) }
     var error by remember { mutableStateOf<String?>(null) }
+    
+    var showFetchDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    var isFetching by remember { mutableStateOf(false) }
 
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
@@ -570,20 +580,112 @@ fun ReplaceEditorDialog(initialContent: String, onDismiss: () -> Unit, onSave: (
                 
                 Spacer(modifier = Modifier.height(16.dp))
                 
-                Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                    TextButton(onClick = onDismiss) { Text("Cancel") }
-                    Button(onClick = {
-                        val lines = content.lines()
-                        val invalidLines = lines.filter { it.isNotBlank() && !it.contains("|") && !it.startsWith("#") }
-                        if (invalidLines.isNotEmpty()) {
-                            error = "Invalid lines (missing '|'): ${invalidLines.take(3)}"
-                        } else {
-                            onSave(content)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    // Left side: Fetch Button
+                    if (isFetching) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                    } else {
+                        TextButton(onClick = { showFetchDialog = true }) {
+                            Text("Fetch Names")
                         }
-                    }) { Text("Save") }
+                    }
+
+                    // Right side: Save/Cancel
+                    Row {
+                        TextButton(onClick = onDismiss) { Text("Cancel") }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Button(onClick = {
+                            val lines = content.lines()
+                            val invalidLines = lines.filter { it.isNotBlank() && !it.contains("|") && !it.startsWith("#") }
+                            if (invalidLines.isNotEmpty()) {
+                                error = "Invalid lines (missing '|'): ${invalidLines.take(3)}"
+                            } else {
+                                onSave(content)
+                            }
+                        }) { Text("Save") }
+                    }
                 }
             }
         }
+    }
+
+    if (showFetchDialog) {
+        var urlInput by remember { mutableStateOf("") }
+        var fetchError by remember { mutableStateOf<String?>(null) }
+
+        AlertDialog(
+            onDismissRequest = { showFetchDialog = false },
+            title = { Text("Fetch Character Names") },
+            text = {
+                Column {
+                    Text("Enter MyAnimeList or AniDB URL:")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = urlInput, 
+                        onValueChange = { urlInput = it },
+                        label = { Text("URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true
+                    )
+                    if (fetchError != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(fetchError!!, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    if (urlInput.isNotBlank()) {
+                        showFetchDialog = false
+                        isFetching = true
+                        scope.launch {
+                            try {
+                                val names = withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    CharacterNameFetcher.fetchNames(urlInput)
+                                }
+                                if (names.isNotEmpty()) {
+                                    // Parse existing content to check for duplicates
+                                    val existingLines = content.lines().map { it.trim() }.filter { it.isNotBlank() }.toSet()
+                                    val sb = StringBuilder(content)
+                                    if (content.isNotBlank() && !content.endsWith("\n")) {
+                                        sb.append("\n")
+                                    }
+                                    
+                                    var addedCount = 0
+                                    names.forEach { name ->
+                                        val newLine = "${name.original}|${name.replacement}"
+                                        // Check if this exact line exists (ignoring whitespace differences around it)
+                                        if (!existingLines.contains(newLine)) {
+                                            sb.append(newLine).append("\n")
+                                            addedCount++
+                                        }
+                                    }
+                                    
+                                    if (addedCount > 0) {
+                                        content = sb.toString()
+                                        Logger.i("ReplaceEditor", "Added $addedCount new names")
+                                    } else {
+                                        Logger.i("ReplaceEditor", "No new unique names found to add")
+                                    }
+                                } else {
+                                    error = "No names found."
+                                }
+                            } catch (e: Exception) {
+                                Logger.e("ReplaceEditor", "Error fetching names: ${e.message}")
+                                error = "Error: ${e.message}"
+                            } finally {
+                                isFetching = false
+                            }
+                        }
+                    }
+                }) {
+                    Text("Fetch")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showFetchDialog = false }) { Text("Cancel") }
+            }
+        )
     }
 }
 
