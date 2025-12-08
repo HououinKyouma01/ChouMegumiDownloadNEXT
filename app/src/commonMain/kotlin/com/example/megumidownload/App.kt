@@ -47,7 +47,8 @@ fun App(
     permissionHandler: PermissionHandler,
     backgroundScheduler: BackgroundScheduler,
     linkExtractor: LinkExtractor,
-    notificationService: NotificationService
+    notificationService: NotificationService,
+    videoProcessor: VideoProcessor
 ) {
     val rssEnabled by configManager.rssEnabled.collectAsState(initial = false)
 
@@ -95,7 +96,7 @@ fun App(
                  SettingsScreen(configManager, seriesManager, permissionHandler) 
             }
             composable(Screen.Downloader.route) {
-                 DownloaderScreen(configManager, seriesManager, rssRepository, systemDownloadManager, linkExtractor)
+                 DownloaderScreen(configManager, seriesManager, rssRepository, systemDownloadManager, linkExtractor, downloadManager, backgroundScheduler)
             }
         }
     }

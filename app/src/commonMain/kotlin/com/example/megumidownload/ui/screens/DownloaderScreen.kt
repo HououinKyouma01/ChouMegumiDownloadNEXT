@@ -40,7 +40,9 @@ fun DownloaderScreen(
     seriesManager: SeriesManager,
     rssRepository: RssRepository,
     systemDownloadManager: SystemDownloadManager,
-    linkExtractor: LinkExtractor
+    linkExtractor: LinkExtractor,
+    downloadManager: com.example.megumidownload.DownloadManager,
+    backgroundScheduler: com.example.megumidownload.BackgroundScheduler
 ) {
     val scope = rememberCoroutineScope()
 
@@ -66,8 +68,23 @@ fun DownloaderScreen(
     var extractionSeries by remember { mutableStateOf<SeriesEntry?>(null) }
     
     // Queue State
+    var pendingRemove by remember { mutableStateOf<Triple<RssItem, SeriesEntry, List<String>>?>(null) }
     val fetchQueue = remember { mutableStateListOf<Triple<RssItem, SeriesEntry, List<String>>>() }
     var isFetching by remember { mutableStateOf(false) }
+
+    // Error Feedback
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    
+    if (errorMessage != null) {
+        AlertDialog(
+            onDismissRequest = { errorMessage = null },
+            title = { Text("Error") },
+            text = { Text(errorMessage!!) },
+            confirmButton = {
+                TextButton(onClick = { errorMessage = null }) { Text("OK") }
+            }
+        )
+    }
 
     // Auto-Scan State
     var showScanDialog by remember { mutableStateOf(false) }
@@ -115,8 +132,40 @@ fun DownloaderScreen(
             onResult = { result ->
                 if (result != null && extractionSeries != null) {
                     try {
-                        systemDownloadManager.downloadFile(result.url, "${extractionItemTitle}.mkv", extractionItemTitle)
-                        Logger.i("Downloader", "Download Started: $extractionItemTitle")
+                        Logger.i("Downloader", "Extracted URL for '${extractionItemTitle}': ${result.url}")
+                        
+                        // Check if URL looks suspicious (e.g. just the host, or html)
+                        if (result.url.endsWith(".html") || !result.url.contains("/")) {
+                            Logger.w("Downloader", "WARNING: URL looks like an HTML page, not a file! ${result.url}")
+                        }
+                        
+                        val cleanTitle = if (extractionItemTitle.endsWith(".mkv", true)) extractionItemTitle else "${extractionItemTitle}.mkv"
+                        
+                        // Use BackgroundScheduler to handle Download + Processing (Restores Legacy Worker Behavior on Android)
+                        val config = downloadConfig ?: com.example.megumidownload.DownloadConfig(
+                            host = "",
+                            user = "",
+                            pass = "",
+                            remotePath = "",
+                            localBasePath = "",
+                            localOnly = false,
+                            localSourcePath = "",
+                            prefixSeriesName = false,
+                            appendQuality = false
+                        ) // Safe fallback
+                        
+                        backgroundScheduler.scheduleUrlDownload(
+                            url = result.url,
+                            title = cleanTitle,
+                            series = extractionSeries!!,
+                            config = config,
+                            cookie = result.cookie,
+                            userAgent = result.userAgent
+                        )
+                        
+                        Logger.i("Downloader", "Download Scheduled: $extractionItemTitle")
+                        
+                        // NOTE: Polling logic removed. Worker handles lifecycle.
                     } catch (e: Exception) {
                         Logger.e("Downloader", "Failed to start download: ${e.message}")
                     }
@@ -210,19 +259,24 @@ fun DownloaderScreen(
                             loadingMessage = "Initializing..."
                             
                             val targetGroups = if (!series.overrideGroup.isNullOrBlank()) {
-                                listOf(series.overrideGroup)
-                            } else {
+                                listOf(series.overrideGroup!!)
+                            } else if (groups.isNotEmpty()) {
                                 groups
+                            } else {
+                                listOf("")
                             }
+                            Logger.d("Downloader", "DEBUG: DownloadNewest - Series: ${series.fileNameMatch}, Groups: $targetGroups, ConfigGroups: $groups")
                             
                             dialogTitle = "Newest: ${series.fileNameMatch}"
                             
                             for (group in targetGroups) {
-                                if (group.isBlank()) continue
-                                loadingMessage = "Checking $group..."
+                                // Allow blank group
+                                loadingMessage = "Checking ${if(group.isBlank()) "Global (No Group)" else group}..."
+                                Logger.d("Downloader", "DEBUG: Checking group: $group")
                                 val result = rssRepository.fetchFeed(group, series.fileNameMatch, rssQuality)
                                 if (result.isSuccess) {
                                     val items = result.getOrNull()
+                                    Logger.d("Downloader", "DEBUG: Group $group result size: ${items?.size}")
                                     if (!items.isNullOrEmpty()) {
                                         val firstItem = items.first()
                                         currentLinks = listOf(firstItem)
@@ -244,11 +298,20 @@ fun DownloaderScreen(
                                         }
                                         break
                                     }
+                                } else {
+                                    val err = result.exceptionOrNull()?.message ?: "Unknown Error"
+                                    Logger.e("Downloader", "DEBUG: Fetch failed for $group: $err")
+                                    // Only show error if ALL groups fail or if user explicitly triggered it?
+                                    // For debugging, screw it, show the error.
+                                    errorMessage = "Group '$group' Error: $err"
                                 }
                             }
                             
-                             if (currentLinks.isEmpty()) {
+                            if (currentLinks.isEmpty() && errorMessage == null) {
                                 Logger.w("Downloader", "No releases found.")
+                                errorMessage = "No releases found for '${series.fileNameMatch}'. Checked: $targetGroups"
+                                isLoading = false
+                            } else if (currentLinks.isEmpty()) {
                                 isLoading = false
                             }
                         }
@@ -259,24 +322,34 @@ fun DownloaderScreen(
                             currentLinks = emptyList()
                             
                             val targetGroups = if (!series.overrideGroup.isNullOrBlank()) {
-                                listOf(series.overrideGroup)
-                            } else {
+                                listOf(series.overrideGroup!!)
+                            } else if (groups.isNotEmpty()) {
                                 groups
+                            } else {
+                                // Fallback: Search globally if no groups configured
+                                listOf("")
                             }
+                            Logger.d("Downloader", "DEBUG: DownloadAll - Series: ${series.fileNameMatch}, Groups: $targetGroups")
                             
                             dialogTitle = "All: ${series.fileNameMatch}"
                             
                              for (group in targetGroups) {
-                                if (group.isBlank()) continue
-                                loadingMessage = "Checking $group..."
+                                // Allow blank group for global search
+                                loadingMessage = "Checking ${if(group.isBlank()) "Global (No Group)" else group}..."
+                                Logger.d("Downloader", "DEBUG: Checking group: $group")
                                 val result = rssRepository.fetchFeed(group, series.fileNameMatch, rssQuality)
                                 if (result.isSuccess) {
                                     val items = result.getOrNull()
+                                    Logger.d("Downloader", "DEBUG: Group $group result size: ${items?.size}")
                                     if (!items.isNullOrEmpty()) {
                                         currentLinks = items
                                         showLinksDialog = true
                                         break
                                     }
+                                } else {
+                                    val err = result.exceptionOrNull()?.message ?: "Unknown Error"
+                                    Logger.e("Downloader", "DEBUG: Fetch failed for $group: $err")
+                                    errorMessage = "Group '$group' Error: $err"
                                 }
                             }
                              
@@ -300,7 +373,36 @@ fun DownloaderScreen(
                 }
             }
         }
-    }
+        }
+        
+        // Active Download Progress Bar
+        val downloadState by com.example.megumidownload.ProgressRepository.downloadState.collectAsState()
+        
+        if (downloadState is com.example.megumidownload.ProgressRepository.DownloadState.Downloading) {
+            val state = downloadState as com.example.megumidownload.ProgressRepository.DownloadState.Downloading
+            
+            Card(
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("Downloading: ${state.fileName}", style = MaterialTheme.typography.labelMedium)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = state.progress,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        "${(state.currentBytes / 1024 / 1024)} MB / ${(state.totalBytes / 1024 / 1024)} MB", 
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.align(Alignment.End)
+                    )
+                }
+            }
+        } // End if (downloadState)
+        
+        // No extra brace here!
 
     if (showScanDialog && downloadConfig != null) {
         AlertDialog(
@@ -308,12 +410,44 @@ fun DownloaderScreen(
             title = { Text("Found Local Files") },
             text = {
                 Column {
-                    Text("Found ${foundFiles.size} potentially matching files. Process not impl in common yet.")
-                    // TODO: Implement common file rename processing
+                    Text("Found ${foundFiles.size} potentially matching files.")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(onClick = {
+                        // Launch processing
+                        showScanDialog = false
+                        loadingMessage = "Processing ${foundFiles.size} files..."
+                        isLoading = true
+                        
+                        scope.launch {
+                            withContext(Dispatchers.IO) {
+                                foundFiles.forEach { file ->
+                                    val series = seriesList.find { file.name.contains(it.fileNameMatch, true) }
+                                    if (series != null) {
+                                        Logger.i("Downloader", "Processing local file: ${file.name}")
+                                        val success = downloadManager.processTempFile(
+                                            localTempFile = file,
+                                            originalFileName = file.name,
+                                            localDestBasePath = downloadConfig.localBasePath,
+                                            series = series
+                                        )
+                                        
+                                        if (success) {
+                                            Logger.i("Downloader", "Successfully processed: ${file.name}")
+                                        } else {
+                                            Logger.e("Downloader", "Failed to process: ${file.name}")
+                                        }
+                                    }
+                                }
+                            }
+                            isLoading = false
+                        }
+                    }) {
+                        Text("Process All")
+                    }
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showScanDialog = false }) { Text("OK") }
+                TextButton(onClick = { showScanDialog = false }) { Text("Cancel") }
             }
         )
     }
@@ -337,11 +471,12 @@ fun DownloaderScreen(
                      // The requirement is "View Page" vs "Download".
                      // If it's a direct link or extractable, we probably want to download.
                      // I will assume for now we just try systemDownloadManager or open if it fails.
-                     systemDownloadManager.downloadFile(url, "download.html", "Manual Download")
+                     // we likely need to extract here too if it's GoFile manually clicked, 
+                     // but for now just pass URL (which might fail if it needs cookies, but simple fallback)
+                     systemDownloadManager.downloadFile(url, "download.html", "Manual Download", null, null)
                 } else {
-                    // Open in Browser?
-                    // We need a URI opener.
-                    Logger.i("Downloader", "Opening link: $url (Not implemented in common yet)")
+                    // Open in Browser
+                    systemDownloadManager.openLink(url)
                 }
             }
         )

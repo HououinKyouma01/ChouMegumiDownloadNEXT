@@ -21,8 +21,14 @@ fun FilePickerDialog(
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
-    // Default to user home if initial path invalid
-    val safeInitial = if (initialPath.isNotBlank() && File(initialPath).exists()) initialPath else System.getProperty("user.home") ?: "/"
+    // Default to user home if initial path invalid. 
+    // On Android, user.home might be internal storage. Try /storage/emulated/0 for convenience if it exists.
+    val safeInitial = if (initialPath.isNotBlank() && File(initialPath).exists()) {
+        initialPath
+    } else {
+        val androidRoot = File("/storage/emulated/0")
+        if (androidRoot.exists() && androidRoot.canRead()) androidRoot.absolutePath else System.getProperty("user.home") ?: "/"
+    }
     
     var currentPath by remember(initialPath) { mutableStateOf(safeInitial) }
     val currentDir = File(currentPath)

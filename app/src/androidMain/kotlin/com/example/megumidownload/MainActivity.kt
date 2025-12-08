@@ -11,6 +11,8 @@ import com.example.megumidownload.ui.theme.MegumiDownloadTheme
 import com.example.megumidownload.viewmodel.LogViewModel
 
 class MainActivity : ComponentActivity() {
+    private lateinit var permissionHandler: AndroidPermissionHandler
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
@@ -20,10 +22,13 @@ class MainActivity : ComponentActivity() {
         val syncManager = SyncManager(configManager, seriesManager, notificationService, filesDir, cacheDir)
         val rssRepository = RssRepository()
         val videoProcessor = AndroidVideoProcessor(this)
-        val downloadManager = DownloadManager(configManager, seriesManager, videoProcessor, cacheDir)
+        val downloadManager = DownloadManager(configManager, seriesManager, videoProcessor, cacheDir, notificationService)
         val systemDownloadManager = AndroidSystemDownloadManager(this)
         val logViewModel = LogViewModel()
-        val permissionHandler = AndroidPermissionHandler(this)
+        
+        // Initialize the property
+        permissionHandler = AndroidPermissionHandler(this)
+        
         val backgroundScheduler = AndroidBackgroundScheduler(this)
         val linkExtractor = AndroidLinkExtractor()
 
@@ -44,10 +49,18 @@ class MainActivity : ComponentActivity() {
                         permissionHandler = permissionHandler,
                         backgroundScheduler = backgroundScheduler,
                         linkExtractor = linkExtractor,
-                        notificationService = notificationService
+                        notificationService = notificationService,
+                        videoProcessor = videoProcessor
                     )
                 }
             }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::permissionHandler.isInitialized) {
+            permissionHandler.checkPermissions()
         }
     }
 }

@@ -52,7 +52,7 @@ fun DashboardScreen(
                 }
                 
                 Button(onClick = {
-                    backgroundScheduler?.scheduleDownload()
+                    backgroundScheduler?.scheduleDownload(force = true)
                     viewModel.addLog("Download started in background...", LogType.INFO)
                 }) {
                     Text("Start Download")
@@ -125,8 +125,8 @@ fun DashboardScreen(
         val autoStart by configManager.autoStart.collectAsState(initial = false)
         LaunchedEffect(autoStart) {
             if (autoStart && logs.isEmpty()) { 
-                backgroundScheduler?.scheduleDownload()
-                viewModel.addLog("Auto-start: Download started...", LogType.INFO)
+                viewModel.addLog("Auto-start triggering detected (Config=True)...", LogType.INFO)
+                backgroundScheduler?.scheduleDownload(force = false)
             }
         }
     }

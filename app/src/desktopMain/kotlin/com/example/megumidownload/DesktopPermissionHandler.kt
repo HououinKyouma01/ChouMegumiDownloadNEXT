@@ -13,4 +13,5 @@ class DesktopPermissionHandler : PermissionHandler {
     
     override fun hasNotificationPermission(): Boolean = true
     override fun requestNotificationPermission() {}
+    override fun checkPermissions() {}
 }

@@ -13,7 +13,8 @@ class DesktopVideoProcessor : VideoProcessor {
         inputMkv: File,
         outputMkv: File,
         subtitleOffsetMs: Long,
-        replaceFile: File?
+        replaceFile: File?,
+        fixTiming: Boolean
     ): Boolean = withContext(Dispatchers.IO) {
         
         // 0. Get Duration
@@ -36,41 +37,46 @@ class DesktopVideoProcessor : VideoProcessor {
              Logger.w(TAG, "Subtitle replacement failed/skipped")
         }
 
-        // 3. Re-encode for Keyframes
-        val reencodedVideoFile = File(inputMkv.parent, "temp_reencoded_${inputMkv.name}.mkv")
-        Logger.d(TAG, "Re-encoding video to generate keyframes...")
-        ProgressRepository.updateProgress(inputMkv.name, "Re-encoding (Heavy)", 0.25f)
-        
-        // Simulating progress logic is harder with ProcessBuilder without parsing stderr line by line.
-        // For now, we will just block waiting for completion or parse simple logic if needed.
-        // To keep it simple for Desktop: just run it.
-        val reencodeCmd = listOrArgs("ffmpeg", "-y", "-i", inputMkv.absolutePath, "-vf", "scale=-2:720", "-c:v", "libx264", "-c:a", "copy", 
-            "-preset", "medium", "-g", "250", "-keyint_min", "24", "-sc_threshold", "40", "-crf", "23", 
-            "-x264-params", "keyint=250:min-keyint=24:scenecut=40:no-mbtree=0", "-f", "matroska", reencodedVideoFile.absolutePath)
+        var finalSubtitleFile = subtitleFile
+
+        if (fixTiming) {
+            // 3. Re-encode for Keyframes
+            val reencodedVideoFile = File(inputMkv.parent, "temp_reencoded_${inputMkv.name}.mkv")
+            Logger.d(TAG, "Re-encoding video to generate keyframes...")
+            ProgressRepository.updateProgress(inputMkv.name, "Re-encoding (Heavy)", 0.25f)
             
-        if (!runCommand(reencodeCmd)) {
-             Logger.e(TAG, "Failed to re-encode")
+            // Simulating progress logic is harder with ProcessBuilder without parsing stderr line by line.
+            // For now, we will just block waiting for completion or parse simple logic if needed.
+            // To keep it simple for Desktop: just run it.
+            val reencodeCmd = listOrArgs("ffmpeg", "-y", "-i", inputMkv.absolutePath, "-vf", "scale=-2:720", "-c:v", "libx264", "-c:a", "copy", 
+                "-preset", "medium", "-g", "250", "-keyint_min", "24", "-sc_threshold", "40", "-crf", "23", 
+                "-x264-params", "keyint=250:min-keyint=24:scenecut=40:no-mbtree=0", "-f", "matroska", reencodedVideoFile.absolutePath)
+                
+            if (!runCommand(reencodeCmd)) {
+                 Logger.e(TAG, "Failed to re-encode")
+            }
+            
+            val videoForKeyframes = if (reencodedVideoFile.exists() && reencodedVideoFile.length() > 0) reencodedVideoFile else inputMkv
+    
+            // 4. Extract Keyframes
+            ProgressRepository.updateProgress(inputMkv.name, "Extracting Keyframes", 0.85f)
+            val keyframes = getKeyframes(videoForKeyframes)
+            Logger.d(TAG, "Found ${keyframes.size} keyframes")
+            
+            if (reencodedVideoFile.exists()) reencodedVideoFile.delete()
+    
+            // 5. Adjust Timing
+            ProgressRepository.updateProgress(inputMkv.name, "Adjusting Timing", 0.9f)
+            val adjustedSubtitleFile = File(inputMkv.parent, "adjusted_${inputMkv.name}.ass")
+            AssSubtitleAdjuster.adjustTiming(subtitleFile, adjustedSubtitleFile, subtitleOffsetMs, keyframes)
+            finalSubtitleFile = adjustedSubtitleFile
         }
-        
-        val videoForKeyframes = if (reencodedVideoFile.exists() && reencodedVideoFile.length() > 0) reencodedVideoFile else inputMkv
-
-        // 4. Extract Keyframes
-        ProgressRepository.updateProgress(inputMkv.name, "Extracting Keyframes", 0.85f)
-        val keyframes = getKeyframes(videoForKeyframes)
-        Logger.d(TAG, "Found ${keyframes.size} keyframes")
-        
-        if (reencodedVideoFile.exists()) reencodedVideoFile.delete()
-
-        // 5. Adjust Timing
-        ProgressRepository.updateProgress(inputMkv.name, "Adjusting Timing", 0.9f)
-        val adjustedSubtitleFile = File(inputMkv.parent, "adjusted_${inputMkv.name}.ass")
-        AssSubtitleAdjuster.adjustTiming(subtitleFile, adjustedSubtitleFile, subtitleOffsetMs, keyframes)
 
         // 6. Muxing
         ProgressRepository.updateProgress(inputMkv.name, "Muxing", 0.95f)
         Logger.d(TAG, "Muxing to ${outputMkv.absolutePath}")
         // ffmpeg -i input -i adjusted -map 0:v -map 0:a -map 1 -c copy -c:s ass -disposition:s:0 default output -y
-        val muxCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-i", adjustedSubtitleFile.absolutePath, 
+        val muxCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-i", finalSubtitleFile.absolutePath, 
             "-map", "0:v", "-map", "0:a", "-map", "1", "-c", "copy", "-c:s", "ass", "-disposition:s:0", "default", outputMkv.absolutePath, "-y")
             
         if (!runCommand(muxCmd)) {

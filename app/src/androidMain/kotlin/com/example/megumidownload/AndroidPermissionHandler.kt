@@ -20,13 +20,27 @@ class AndroidPermissionHandler(
     private val delegate = PermissionManager(activity)
 
     override fun hasStoragePermission(): Boolean {
-        val hasIt = delegate.hasStoragePermission()
-        _needsPermission.value = !hasIt
-        return hasIt
+        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            android.os.Environment.isExternalStorageManager()
+        } else {
+            delegate.hasStoragePermission()
+        }
     }
 
     override fun requestStoragePermission() {
-        delegate.requestStoragePermission()
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+            try {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                intent.addCategory("android.intent.category.DEFAULT")
+                intent.data = android.net.Uri.parse(String.format("package:%s", activity.packageName))
+                activity.startActivity(intent)
+            } catch (e: Exception) {
+                val intent = android.content.Intent(android.provider.Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+                activity.startActivity(intent)
+            }
+        } else {
+            delegate.requestStoragePermission()
+        }
     }
     
     override fun hasNotificationPermission(): Boolean {
@@ -48,5 +62,11 @@ class AndroidPermissionHandler(
                 2001
             )
         }
+    }
+
+    override fun checkPermissions() {
+        val storage = hasStoragePermission()
+        // val notification = hasNotificationPermission() // Not tracking notification in flow currently, but could
+        _needsPermission.value = !storage
     }
 }

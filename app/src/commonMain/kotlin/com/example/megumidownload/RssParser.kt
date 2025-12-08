@@ -7,11 +7,11 @@ import java.util.regex.Pattern
 import javax.xml.parsers.DocumentBuilderFactory
 
 data class RssItem(
-    val title: String,
-    val link: String,
-    val description: String,
-    val pubDate: String,
-    val hostLinks: Map<String, String> // e.g. "GoFile" -> "https://gofile.io/..."
+    val title: String = "",
+    val link: String = "",
+    val description: String = "",
+    val pubDate: String = "",
+    val hostLinks: Map<String, String> = emptyMap() // e.g. "GoFile" -> "https://gofile.io/..."
 )
 
 object RssParser {

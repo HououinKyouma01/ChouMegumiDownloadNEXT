@@ -27,11 +27,24 @@ class DownloadWorker(
             configManager, 
             seriesManager,
             videoProcessor,
-            applicationContext.cacheDir
+            applicationContext.cacheDir,
+            AndroidNotificationService(applicationContext)
         )
         
         try {
-            downloadManager.startDownloadCycle()
+            var force = inputData.getBoolean("force", false)
+            
+            // Fix for "Regression" / Death Loop:
+            // If the worker is retrying (e.g. after a crash), we should NOT respect the original "force" flag blindly.
+            // If we do, a crashing "Force Download" will restart strictly on app launch, appearing as an unwanted "Auto Start".
+            // By setting force=false on retry, we leverage DownloadManager's check:
+            // "If !force, check config.autoStart".
+            // This ensures that if the user didn't want auto-start, a crashed manual start won't haunt them forever.
+            if (runAttemptCount > 0) {
+                 force = false
+            }
+            
+            downloadManager.startDownloadCycle(force)
             Result.success()
         } catch (e: Exception) {
             Result.failure()

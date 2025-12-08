@@ -90,6 +90,19 @@ fun SeriesManagerScreen(
     
     val localPath by configManager.localPath.collectAsState(initial = "")
     val smbHost by configManager.smbHost.collectAsState(initial = "")
+    
+    // Generic Error Dialog for debugging
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    if (errorMessage != null) {
+        AlertDialog(
+            onDismissRequest = { errorMessage = null },
+            title = { Text("Error") },
+            text = { Text(errorMessage!!) },
+            confirmButton = {
+                TextButton(onClick = { errorMessage = null }) { Text("OK") }
+            }
+        )
+    }
 
     Scaffold(
         floatingActionButton = {
@@ -203,6 +216,7 @@ fun SeriesManagerScreen(
                                                     showRemoteReplaceEditor = true
                                                 }.onFailure { e ->
                                                     Logger.e("SeriesManager", "Error fetching remote replace: ${e.message}")
+                                                    errorMessage = "Error: ${e.message}"
                                                 }
                                             }
                                         },
@@ -509,12 +523,16 @@ fun SeriesManagerScreen(
                         Logger.i("SeriesManager", "Saved remote replace.txt")
                     } else {
                         Logger.e("SeriesManager", "Failed to save remote replace.txt")
+                        // We could show error here too, but let's focus on "Open" first
                     }
                     showRemoteReplaceEditor = false
                 }
             }
         )
     }
+    
+    // ... inside Remote Edit button ...
+    // Note: I need to update the Remote Edit button onClick listener to set errorMessage
 }
 
 // Dialog Implementations

@@ -3,6 +3,7 @@ package com.example.megumidownload
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Properties
 
@@ -83,9 +84,20 @@ class DesktopConfigManager : ConfigManager {
     
     private val _rssLastCheckTime = MutableStateFlow(0L)
     override val rssLastCheckTime: Flow<Long> = _rssLastCheckTime.asStateFlow()
-
+    
+    private val _debugLogs = MutableStateFlow(false)
+    override val debugLogs: Flow<Boolean> = _debugLogs.asStateFlow()
+    
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+    
     init {
         loadConfig()
+        scope.launch {
+            debugLogs.collect { enabled ->
+                Logger.debugEnabled = enabled
+                println("DesktopConfigManager: Debug logs enabled: $enabled")
+            }
+        }
     }
 
     private fun loadConfig() {
@@ -103,7 +115,7 @@ class DesktopConfigManager : ConfigManager {
         _remotePath.value = properties.getProperty(ConfigKeys.REMOTE_PATH.keyName, "")
         _localPath.value = properties.getProperty(ConfigKeys.LOCAL_PATH.keyName, "")
         _localSourcePath.value = properties.getProperty(ConfigKeys.LOCAL_SOURCE_PATH.keyName, "")
-  
+        
         _smbHost.value = properties.getProperty(ConfigKeys.SMB_HOST.keyName, "")
         _smbUser.value = properties.getProperty(ConfigKeys.SMB_USER.keyName, "")
         _smbPassword.value = properties.getProperty(ConfigKeys.SMB_PASSWORD.keyName, "")
@@ -121,6 +133,7 @@ class DesktopConfigManager : ConfigManager {
         _wifiOnly.value = properties.getProperty(ConfigKeys.WIFI_ONLY.keyName, "false").toBoolean()
         _rssEnabled.value = properties.getProperty(ConfigKeys.RSS_ENABLED.keyName, "false").toBoolean()
         _autoDownloadGofile.value = properties.getProperty(ConfigKeys.AUTO_DOWNLOAD_GOFILE.keyName, "false").toBoolean()
+        _debugLogs.value = properties.getProperty(ConfigKeys.DEBUG_LOGS.keyName, "false").toBoolean()
 
         // Load Long/Int props
         _autoSyncInterval.value = properties.getProperty(ConfigKeys.AUTO_SYNC_INTERVAL.keyName, "60").toLongOrNull() ?: 60L
@@ -152,6 +165,7 @@ class DesktopConfigManager : ConfigManager {
         properties.setProperty(ConfigKeys.WIFI_ONLY.keyName, _wifiOnly.value.toString())
         properties.setProperty(ConfigKeys.RSS_ENABLED.keyName, _rssEnabled.value.toString())
         properties.setProperty(ConfigKeys.AUTO_DOWNLOAD_GOFILE.keyName, _autoDownloadGofile.value.toString())
+        properties.setProperty(ConfigKeys.DEBUG_LOGS.keyName, _debugLogs.value.toString())
         
         properties.setProperty(ConfigKeys.RSS_CHECK_INTERVAL_HOURS.keyName, _rssCheckIntervalHours.value.toString())
         properties.setProperty(ConfigKeys.AUTO_SYNC_INTERVAL.keyName, _autoSyncInterval.value.toString())
@@ -183,6 +197,7 @@ class DesktopConfigManager : ConfigManager {
             ConfigKeys.WIFI_ONLY -> _wifiOnly.value = value as Boolean
             ConfigKeys.RSS_ENABLED -> _rssEnabled.value = value as Boolean
             ConfigKeys.AUTO_DOWNLOAD_GOFILE -> _autoDownloadGofile.value = value as Boolean
+            ConfigKeys.DEBUG_LOGS -> _debugLogs.value = value as Boolean
             
             ConfigKeys.RSS_CHECK_INTERVAL_HOURS -> _rssCheckIntervalHours.value = value as Int
             ConfigKeys.AUTO_SYNC_INTERVAL -> _autoSyncInterval.value = value as Long

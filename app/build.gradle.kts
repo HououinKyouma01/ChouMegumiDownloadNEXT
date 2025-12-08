@@ -4,6 +4,9 @@ buildscript {
     }
 }
 
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.multiplatform")
@@ -76,11 +79,45 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
+        
+        // Optimize APK size: Only include native libraries for ARM devices (99% of phones) & x86_64 (Emulators/Chromebooks)
+        // Dropping x86 (32-bit) saves space.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        }
     }
+    signingConfigs {
+        create("release") {
+            val keystorePropertiesFile = rootProject.file("local.properties")
+            val keystoreProperties = Properties()
+            if (keystorePropertiesFile.exists()) {
+                keystoreProperties.load(FileInputStream(keystorePropertiesFile))
+            }
+
+            val keyFileName = keystoreProperties["key.store"] as? String ?: "release.jks"
+            val keyFile = file(keyFileName)
+
+            if (keyFile.exists() && keystoreProperties.containsKey("store.pass")) {
+                storeFile = keyFile
+                storePassword = keystoreProperties["store.pass"] as String
+                keyAlias = keystoreProperties["key.alias"] as String
+                keyPassword = keystoreProperties["key.pass"] as String
+            } else {
+                println("Note: Release signing skipped. keys missing in local.properties or keystore file not found.")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            
+            // Only sign if the config was successfully set up above
+            if (signingConfigs.getByName("release").storeFile != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
     compileOptions {
@@ -92,11 +129,6 @@ android {
     }
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.11"
-    }
-    packaging {
-        resources {
-            excludes += "/META-INF/{AL2.0,LGPL2.1}"
-        }
     }
 
     sourceSets {
@@ -120,6 +152,7 @@ compose.desktop {
             version.set("7.5.0")
             configurationFiles.from(project.file("compose-desktop.pro"))
             obfuscate.set(false)
+            optimize.set(false)
         }
     }
 }

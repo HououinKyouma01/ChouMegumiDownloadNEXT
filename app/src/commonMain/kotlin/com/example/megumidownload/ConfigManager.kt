@@ -58,6 +58,7 @@ object ConfigKeys {
     val AUTO_DOWNLOAD_GOFILE = ConfigKey.BooleanKey("auto_download_gofile")
     val RSS_CHECK_INTERVAL_HOURS = ConfigKey.IntKey("rss_check_interval_hours")
     val RSS_LAST_CHECK_TIME = ConfigKey.LongKey("rss_last_check_time")
+    val DEBUG_LOGS = ConfigKey.BooleanKey("debug_logs")
 }
 
 interface ConfigManager {
@@ -87,6 +88,7 @@ interface ConfigManager {
     val autoDownloadGofile: Flow<Boolean>
     val rssCheckIntervalHours: Flow<Int>
     val rssLastCheckTime: Flow<Long>
+    val debugLogs: Flow<Boolean>
 
     suspend fun <T> updateConfig(key: ConfigKey<T>, value: T)
     

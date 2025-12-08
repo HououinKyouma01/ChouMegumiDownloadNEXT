@@ -27,19 +27,26 @@ class RssRepository {
             val urlString = "$BASE_URL?q=$encodedQuery"
             
             val url = URL(urlString)
+            Logger.d("RssRepo", "DEBUG: Fetching URL: $urlString")
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 10000
             connection.readTimeout = 10000
             
+            Logger.d("RssRepo", "DEBUG: Response Code: ${connection.responseCode}")
             if (connection.responseCode == HttpURLConnection.HTTP_OK) {
                 val xmlData = connection.inputStream.bufferedReader().readText()
+                Logger.d("RssRepo", "DEBUG: XML Data Length: ${xmlData.length}")
                 val items = RssParser.parse(xmlData)
+                Logger.d("RssRepo", "DEBUG: Parsed Items: ${items.size}")
                 Result.success(items)
             } else {
+                Logger.e("RssRepo", "DEBUG: HTTP Error: ${connection.responseCode}")
                 Result.failure(Exception("HTTP Error: ${connection.responseCode}"))
             }
         } catch (e: Exception) {
+             Logger.e("RssRepo", "DEBUG: Exception: ${e.message}")
+             e.printStackTrace()
             Result.failure(e)
         }
     }

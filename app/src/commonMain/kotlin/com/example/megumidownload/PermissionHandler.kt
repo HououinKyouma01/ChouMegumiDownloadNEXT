@@ -8,4 +8,5 @@ interface PermissionHandler {
     fun requestStoragePermission()
     fun hasNotificationPermission(): Boolean
     fun requestNotificationPermission()
+    fun checkPermissions()
 }

@@ -41,7 +41,8 @@ class RssDownloadWorker(
         val configManager = AndroidConfigManager(applicationContext)
         val seriesManager = SeriesManager(applicationContext.filesDir)
         val videoProcessor = AndroidVideoProcessor(applicationContext)
-        val downloadManager = DownloadManager(configManager, seriesManager, videoProcessor, applicationContext.cacheDir)
+        val notificationService = AndroidNotificationService(applicationContext)
+        val downloadManager = DownloadManager(configManager, seriesManager, videoProcessor, applicationContext.cacheDir, notificationService)
 
         try {
             if (url != null) {

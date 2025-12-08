@@ -11,15 +11,24 @@ class DownloadManager(
     private val configManager: ConfigManager,
     private val seriesManager: SeriesManager,
     private val videoProcessor: VideoProcessor,
-    private val cacheDir: File
+    private val cacheDir: File,
+    private val notificationService: NotificationService
 ) {
     private val TAG = "DownloadManager"
 
 
-    suspend fun startDownloadCycle() = withContext(Dispatchers.IO) {
-        log("Starting download cycle...")
+    suspend fun startDownloadCycle(force: Boolean = false) = withContext(Dispatchers.IO) {
+        log("Starting download cycle (Force=$force)...")
         
         val config = configManager.getDownloadConfig()
+        // Double check auto-start if not forced (source of truth check)
+        if (!force) {
+            val autoStart = configManager.autoStart.first()
+            if (!autoStart) {
+                log("Auto-start disabled in config. Aborting cycle.")
+                return@withContext
+            }
+        }
         val host = config.host
         val user = config.user
         val password = config.pass
@@ -44,7 +53,7 @@ class DownloadManager(
                 log("SFTP Configuration missing. Please check settings.", LogType.ERROR)
                 return@withContext
             }
-            processRemoteFiles(host, user, password, remotePath, localBasePath)
+            processRemoteFiles(host, user, password, remotePath, localBasePath, localSourcePath)
         }
     }
 
@@ -73,9 +82,10 @@ class DownloadManager(
         ProgressRepository.reset()
     }
 
-    private suspend fun processRemoteFiles(host: String, user: String, pass: String, remotePath: String, localBasePath: String) {
-        val sftp = SftpClientWrapper(host = host, username = user, password = pass)
+    private suspend fun processRemoteFiles(host: String, user: String, pass: String, remotePath: String, localBasePath: String, localSourcePath: String) {
+        var sftp: SftpClientWrapper? = null
         try {
+            sftp = SftpClientWrapper(host = host, username = user, password = pass)
             log("Connecting to $host...")
             sftp.connect()
             log("Connected.", LogType.SUCCESS)
@@ -84,6 +94,7 @@ class DownloadManager(
             val mkvFiles = files.filter { it.endsWith(".mkv", ignoreCase = true) }
             
             log("Found ${mkvFiles.size} MKV files.")
+            ProgressRepository.setTotalFiles(mkvFiles.size)
             
             val seriesList = seriesManager.getSeriesList()
             
@@ -91,16 +102,18 @@ class DownloadManager(
                 val matchedSeries = seriesList.find { fileName.contains(it.fileNameMatch, ignoreCase = true) }
                 
                 if (matchedSeries != null) {
-                    processFile(sftp, fileName, remotePath, localBasePath, matchedSeries)
+                    processFile(sftp, fileName, remotePath, localBasePath, matchedSeries, localSourcePath)
                 }
+                ProgressRepository.incrementProcessedFiles()
             }
             
         } catch (e: Exception) {
             log("Error: ${e.message}", LogType.ERROR)
             e.printStackTrace()
         } finally {
-            sftp.disconnect()
+            sftp?.disconnect()
             log("Disconnected.")
+            ProgressRepository.reset()
         }
     }
 
@@ -109,20 +122,41 @@ class DownloadManager(
         fileName: String,
         sourceBasePath: String,
         localDestBasePath: String,
-        series: SeriesEntry
+        series: SeriesEntry,
+        localSourcePath: String = ""
     ) {
         log("Processing $fileName for series ${series.folderName}...")
         
-        log("Processing $fileName for series ${series.folderName}...")
-        
-        val tempDir = cacheDir
+        // Use localSourcePath as download destination if set, otherwise cacheDir
+        val tempDir = if (localSourcePath.isNotBlank()) {
+            File(localSourcePath).apply { if (!exists()) mkdirs() }
+        } else {
+            cacheDir
+        }
         val localTempFile = File(tempDir, fileName)
         
         // 1. Fetch (Download or Copy)
         log("Fetching $fileName...")
         try {
             if (sftp != null) {
-                sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath)
+                notificationService.showProgressNotification(fileName, "Downloading...", 0, 100, true)
+                var lastProgressTime = 0L
+                sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath) { bytesRead, totalBytes ->
+                     val now = System.currentTimeMillis()
+                     if (now - lastProgressTime > 100) { // Throttle updates (100ms for UI)
+                        lastProgressTime = now
+                        ProgressRepository.updateProgress(fileName, bytesRead, totalBytes)
+                        
+                        // Keep notification service for Android background/foreground support
+                        val percentage = if (totalBytes > 0) ((bytesRead.toDouble() / totalBytes.toDouble()) * 100).toInt() else -1
+                        val mbRead = bytesRead / 1024 / 1024
+                        val mbTotal = totalBytes / 1024 / 1024
+                        val status = if (totalBytes > 0) "Downloading ($mbRead/${mbTotal} MB)" else "Downloading ($mbRead MB)"
+                        notificationService.showProgressNotification(fileName, status, percentage, 100, false)
+                     }
+                }
+                notificationService.showNotification(fileName, "Download Complete")
+                ProgressRepository.setIdle()
             } else {
                 // Local copy
                 val sourceFile = File(sourceBasePath, fileName)
@@ -135,6 +169,7 @@ class DownloadManager(
             log("Fetch complete.", LogType.SUCCESS)
         } catch (e: Exception) {
             log("Fetch failed: ${e.message}", LogType.ERROR)
+            notificationService.showNotification("Download Failed", "Error downloading $fileName: ${e.message}")
             return
         }
         
@@ -248,7 +283,7 @@ class DownloadManager(
              // If fixTiming is false, offset is 0. If true, we need logic (currently 0 as placeholder)
              val offset = if (series.fixTiming) 0L else 0L 
              
-             val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile)
+             val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile, series.fixTiming)
              if (success) {
                  fileToMove = processedFile
                  log("Processing complete.", LogType.SUCCESS)
@@ -285,6 +320,9 @@ class DownloadManager(
     }
 
     private fun log(message: String, type: LogType = LogType.INFO) {
+        // Always log to Repository for INFO, SUCCESS, WARNING, ERROR.
+        // We only want to hide verbose low-level debugs if we had them.
+        // Since LogType only has INFO, WARNING, ERROR, SUCCESS, we show them all.
         LogRepository.addLog(message, type)
         Logger.d(TAG, message)
     }

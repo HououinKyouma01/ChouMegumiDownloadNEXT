@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
 import android.util.Log
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 
 // Allow access to dataStore extension from this file
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
 class AndroidConfigManager(private val context: Context) : ConfigManager {
-    
     companion object {
         private val HOST = stringPreferencesKey("host")
         private val USER = stringPreferencesKey("user")
@@ -38,6 +40,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
         private val AUTO_DOWNLOAD_GOFILE = booleanPreferencesKey("auto_download_gofile")
         private val RSS_CHECK_INTERVAL_HOURS = intPreferencesKey("rss_check_interval_hours")
         private val RSS_LAST_CHECK_TIME = longPreferencesKey("rss_last_check_time")
+        private val DEBUG_LOGS = booleanPreferencesKey("debug_logs")
     }
 
     override val host: Flow<String> = context.dataStore.data.map { it[HOST] ?: "" }
@@ -66,6 +69,17 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
     override val autoDownloadGofile: Flow<Boolean> = context.dataStore.data.map { it[AUTO_DOWNLOAD_GOFILE] ?: false }
     override val rssCheckIntervalHours: Flow<Int> = context.dataStore.data.map { it[RSS_CHECK_INTERVAL_HOURS] ?: 1 }
     override val rssLastCheckTime: Flow<Long> = context.dataStore.data.map { it[RSS_LAST_CHECK_TIME] ?: 0L }
+    override val debugLogs: Flow<Boolean> = context.dataStore.data.map { it[DEBUG_LOGS] ?: false }
+
+    init {
+       // Watch for debug flag changes and update Logger
+       kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+           debugLogs.collect { enabled ->
+               Logger.debugEnabled = enabled
+               Log.d("AndroidConfigManager", "Debug logs enabled: $enabled")
+           }
+       }
+    }
 
     override suspend fun <T> updateConfig(key: ConfigKey<T>, value: T) {
         Log.d("AndroidConfigManager", "Updating config: ${key.keyName} = $value")
@@ -101,6 +115,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
             ConfigKeys.AUTO_DOWNLOAD_GOFILE -> AUTO_DOWNLOAD_GOFILE as Preferences.Key<T>
             ConfigKeys.RSS_CHECK_INTERVAL_HOURS -> RSS_CHECK_INTERVAL_HOURS as Preferences.Key<T>
             ConfigKeys.RSS_LAST_CHECK_TIME -> RSS_LAST_CHECK_TIME as Preferences.Key<T>
+            ConfigKeys.DEBUG_LOGS -> DEBUG_LOGS as Preferences.Key<T>
             else -> throw IllegalArgumentException("Unknown key: ${key.keyName}")
         }
     }

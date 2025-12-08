@@ -65,8 +65,11 @@ fun SettingsScreen(
             item {
 
                 SettingsSection("General") {
-                    // Permissions Check
-                    val hasStorage = remember(permissionHandler) { permissionHandler.hasStoragePermission() }
+                    // Permissions Check - Observe the flow for immediate updates
+                    val needsPermission by permissionHandler.needsPermission.collectAsState()
+                    val hasStorage = !needsPermission
+                    
+                    // Notification permission check (separate from storage flow for now, or could combine)
                     val hasNotification = remember(permissionHandler) { permissionHandler.hasNotificationPermission() }
                     
                     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
@@ -126,6 +129,15 @@ fun SettingsScreen(
                             onCheckedChange = { scope.launch { configManager.updateConfig(ConfigKeys.APPEND_QUALITY, it) } }
                         )
                         Text("Append Quality [1080p]")
+                    }
+                    Divider()
+                    val debugLogs by configManager.debugLogs.collectAsState(initial = false)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = debugLogs,
+                            onCheckedChange = { scope.launch { configManager.updateConfig(ConfigKeys.DEBUG_LOGS, it) } }
+                        )
+                        Text("Enable Debug Logs")
                     }
                 }
             }

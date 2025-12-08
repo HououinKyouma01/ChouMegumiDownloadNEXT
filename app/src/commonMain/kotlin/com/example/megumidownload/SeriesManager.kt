@@ -6,9 +6,9 @@ import com.google.gson.reflect.TypeToken
 import java.io.File
 
 data class SeriesEntry(
-    val fileNameMatch: String,
-    val folderName: String,
-    val seasonNumber: String,
+    val fileNameMatch: String = "",
+    val folderName: String = "",
+    val seasonNumber: String = "1",
     val replaceUrl: String = "",
     val fixTiming: Boolean = false,
     val notify: Boolean = true,
@@ -21,9 +21,16 @@ class SeriesManager(val dataDir: File) {
 
     fun getSeriesList(): List<SeriesEntry> {
         if (!seriesFile.exists()) return emptyList()
-        val json = seriesFile.readText()
-        val type = object : TypeToken<List<SeriesEntry>>() {}.type
-        return gson.fromJson(json, type) ?: emptyList()
+        return try {
+            val json = seriesFile.readText()
+            // Use TypeToken.getParameterized to avoid R8 stripping generic type info from anonymous inner classes
+            val type = TypeToken.getParameterized(List::class.java, SeriesEntry::class.java).type
+            gson.fromJson(json, type) ?: emptyList()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Logger.e("SeriesManager", "Error parsing series list: ${e.message}")
+            emptyList()
+        }
     }
 
     fun saveSeriesList(list: List<SeriesEntry>) {
