@@ -97,6 +97,40 @@ class DesktopConfigManager : ConfigManager {
     
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
     
+    // Window Config Keys
+    private val WINDOW_WIDTH = "window_width"
+    private val WINDOW_HEIGHT = "window_height"
+    private val WINDOW_X = "window_x"
+    private val WINDOW_Y = "window_y"
+    private val WINDOW_MAXIMIZED = "window_maximized"
+
+    data class WindowGeometry(
+        val width: Int, 
+        val height: Int, 
+        val x: Int, 
+        val y: Int, 
+        val isMaximized: Boolean
+    )
+    
+    fun getWindowGeometry(): WindowGeometry {
+        val width = properties.getProperty(WINDOW_WIDTH, "1024").toIntOrNull() ?: 1024
+        val height = properties.getProperty(WINDOW_HEIGHT, "768").toIntOrNull() ?: 768
+        val x = properties.getProperty(WINDOW_X, "100").toIntOrNull() ?: 100
+        val y = properties.getProperty(WINDOW_Y, "100").toIntOrNull() ?: 100
+        val maximized = properties.getProperty(WINDOW_MAXIMIZED, "false").toBoolean()
+        return WindowGeometry(width, height, x, y, maximized)
+    }
+
+    fun saveWindowGeometry(geometry: WindowGeometry) {
+        properties.setProperty(WINDOW_WIDTH, geometry.width.toString())
+        properties.setProperty(WINDOW_HEIGHT, geometry.height.toString())
+        properties.setProperty(WINDOW_X, geometry.x.toString())
+        properties.setProperty(WINDOW_Y, geometry.y.toString())
+        properties.setProperty(WINDOW_MAXIMIZED, geometry.isMaximized.toString())
+        
+        configFile.outputStream().use { properties.store(it, "Megumi Downloader Config") }
+    }
+    
     init {
         loadConfig()
         scope.launch {

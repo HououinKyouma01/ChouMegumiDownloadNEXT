@@ -31,6 +31,9 @@ class SftpClientWrapper(
             val client = SSHClient(config)
             client.addHostKeyVerifier(PromiscuousVerifier())
             
+            // Optimization: Compression is disabled by default in SSHJ, enabling it requires calling useCompression()
+            // So we simply do nothing here to ensure it's off.
+            
             Logger.d("SftpWrapper", "Connecting to $host:$port...")
             client.connect(host, port)
             

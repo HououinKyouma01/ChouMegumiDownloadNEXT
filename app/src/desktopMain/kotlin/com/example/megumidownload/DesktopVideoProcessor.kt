@@ -17,75 +17,92 @@ class DesktopVideoProcessor : VideoProcessor {
         fixTiming: Boolean
     ): Boolean = withContext(Dispatchers.IO) {
         
-        // 0. Get Duration
-        val durationMs = getDurationMs(inputMkv)
-        Logger.d(TAG, "Video duration: ${durationMs}ms")
-
-        // 1. Extract Subtitles
-        ProgressRepository.updateProgress(inputMkv.name, "Extracting Subtitles", 0.1f)
-        val subtitleFile = File(inputMkv.parent, "extracted_${inputMkv.name}.ass")
-        // ffmpeg -i input -map 0:s:0 output.ass -y
-        val extractCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-map", "0:s:0", subtitleFile.absolutePath, "-y")
-        if (!runCommand(extractCmd)) {
-             Logger.e(TAG, "Failed to extract subtitles")
-             return@withContext false
-        }
+        val filesToDelete = mutableListOf<File>()
         
-        // 2. Process Subtitles
-        ProgressRepository.updateProgress(inputMkv.name, "Replacing Text", 0.2f)
-        if (!processSubtitles(subtitleFile, replaceFile)) {
-             Logger.w(TAG, "Subtitle replacement failed/skipped")
-        }
-
-        var finalSubtitleFile = subtitleFile
-
-        if (fixTiming) {
-            // 3. Re-encode for Keyframes
-            val reencodedVideoFile = File(inputMkv.parent, "temp_reencoded_${inputMkv.name}.mkv")
-            Logger.d(TAG, "Re-encoding video to generate keyframes...")
-            ProgressRepository.updateProgress(inputMkv.name, "Re-encoding (Heavy)", 0.25f)
+        try {
+            // 0. Get Duration
+            val durationMs = getDurationMs(inputMkv)
+            Logger.d(TAG, "Video duration: ${durationMs}ms")
+    
+            // 1. Extract Subtitles
+            ProgressRepository.updateProgress(inputMkv.name, "Extracting Subtitles", 0.1f)
+            val subtitleFile = File(inputMkv.parent, "extracted_${inputMkv.name}.ass")
+            filesToDelete.add(subtitleFile)
             
-            // Simulating progress logic is harder with ProcessBuilder without parsing stderr line by line.
-            // For now, we will just block waiting for completion or parse simple logic if needed.
-            // To keep it simple for Desktop: just run it.
-            val reencodeCmd = listOrArgs("ffmpeg", "-y", "-i", inputMkv.absolutePath, "-vf", "scale=-2:720", "-c:v", "libx264", "-c:a", "copy", 
-                "-preset", "medium", "-g", "250", "-keyint_min", "24", "-sc_threshold", "40", "-crf", "23", 
-                "-x264-params", "keyint=250:min-keyint=24:scenecut=40:no-mbtree=0", "-f", "matroska", reencodedVideoFile.absolutePath)
-                
-            if (!runCommand(reencodeCmd)) {
-                 Logger.e(TAG, "Failed to re-encode")
+            // ffmpeg -i input -map 0:s:0 output.ass -y
+            val extractCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-map", "0:s:0", subtitleFile.absolutePath, "-y")
+            if (!runCommand(extractCmd)) {
+                 Logger.e(TAG, "Failed to extract subtitles")
+                 return@withContext false
             }
             
-            val videoForKeyframes = if (reencodedVideoFile.exists() && reencodedVideoFile.length() > 0) reencodedVideoFile else inputMkv
+            // 2. Process Subtitles
+            ProgressRepository.updateProgress(inputMkv.name, "Replacing Text", 0.2f)
+            if (!processSubtitles(subtitleFile, replaceFile)) {
+                 Logger.w(TAG, "Subtitle replacement failed/skipped")
+            }
     
-            // 4. Extract Keyframes
-            ProgressRepository.updateProgress(inputMkv.name, "Extracting Keyframes", 0.85f)
-            val keyframes = getKeyframes(videoForKeyframes)
-            Logger.d(TAG, "Found ${keyframes.size} keyframes")
-            
-            if (reencodedVideoFile.exists()) reencodedVideoFile.delete()
+            var finalSubtitleFile = subtitleFile
     
-            // 5. Adjust Timing
-            ProgressRepository.updateProgress(inputMkv.name, "Adjusting Timing", 0.9f)
-            val adjustedSubtitleFile = File(inputMkv.parent, "adjusted_${inputMkv.name}.ass")
-            AssSubtitleAdjuster.adjustTiming(subtitleFile, adjustedSubtitleFile, subtitleOffsetMs, keyframes)
-            finalSubtitleFile = adjustedSubtitleFile
-        }
-
-        // 6. Muxing
-        ProgressRepository.updateProgress(inputMkv.name, "Muxing", 0.95f)
-        Logger.d(TAG, "Muxing to ${outputMkv.absolutePath}")
-        // ffmpeg -i input -i adjusted -map 0:v -map 0:a -map 1 -c copy -c:s ass -disposition:s:0 default output -y
-        val muxCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-i", finalSubtitleFile.absolutePath, 
-            "-map", "0:v", "-map", "0:a", "-map", "1", "-c", "copy", "-c:s", "ass", "-disposition:s:0", "default", outputMkv.absolutePath, "-y")
-            
-        if (!runCommand(muxCmd)) {
-             Logger.e(TAG, "Failed to mux")
-             return@withContext false
-        }
+            if (fixTiming) {
+                // 3. Re-encode for Keyframes
+                val reencodedVideoFile = File(inputMkv.parent, "temp_reencoded_${inputMkv.name}.mkv")
+                filesToDelete.add(reencodedVideoFile)
+                Logger.d(TAG, "Re-encoding video to generate keyframes...")
+                ProgressRepository.updateProgress(inputMkv.name, "Re-encoding (Heavy)", 0.25f)
+                
+                // Simulating progress logic is harder with ProcessBuilder without parsing stderr line by line.
+                // For now, we will just block waiting for completion or parse simple logic if needed.
+                // To keep it simple for Desktop: just run it.
+                val reencodeCmd = listOrArgs("ffmpeg", "-y", "-i", inputMkv.absolutePath, "-vf", "scale=-2:720", "-c:v", "libx264", "-c:a", "copy", 
+                    "-preset", "medium", "-g", "250", "-keyint_min", "24", "-sc_threshold", "40", "-crf", "23", 
+                    "-x264-params", "keyint=250:min-keyint=24:scenecut=40:no-mbtree=0", "-f", "matroska", reencodedVideoFile.absolutePath)
+                    
+                if (!runCommand(reencodeCmd)) {
+                     Logger.e(TAG, "Failed to re-encode")
+                }
+                
+                val videoForKeyframes = if (reencodedVideoFile.exists() && reencodedVideoFile.length() > 0) reencodedVideoFile else inputMkv
         
-        ProgressRepository.updateProgress(inputMkv.name, "Complete", 1.0f)
-        return@withContext true
+                // 4. Extract Keyframes
+                ProgressRepository.updateProgress(inputMkv.name, "Extracting Keyframes", 0.85f)
+                val keyframes = getKeyframes(videoForKeyframes)
+                Logger.d(TAG, "Found ${keyframes.size} keyframes")
+                
+                if (reencodedVideoFile.exists()) reencodedVideoFile.delete()
+        
+                // 5. Adjust Timing
+                ProgressRepository.updateProgress(inputMkv.name, "Adjusting Timing", 0.9f)
+                val adjustedSubtitleFile = File(inputMkv.parent, "adjusted_${inputMkv.name}.ass")
+                filesToDelete.add(adjustedSubtitleFile)
+                AssSubtitleAdjuster.adjustTiming(subtitleFile, adjustedSubtitleFile, subtitleOffsetMs, keyframes)
+                finalSubtitleFile = adjustedSubtitleFile
+            }
+    
+            // 6. Muxing
+            ProgressRepository.updateProgress(inputMkv.name, "Muxing", 0.95f)
+            Logger.d(TAG, "Muxing to ${outputMkv.absolutePath}")
+            // ffmpeg -i input -i adjusted -map 0:v -map 0:a -map 1 -c copy -c:s ass -disposition:s:0 default output -y
+            val muxCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-i", finalSubtitleFile.absolutePath, 
+                "-map", "0:v", "-map", "0:a", "-map", "1", "-c", "copy", "-c:s", "ass", "-disposition:s:0", "default", outputMkv.absolutePath, "-y")
+                
+            if (!runCommand(muxCmd)) {
+                 Logger.e(TAG, "Failed to mux")
+                 return@withContext false
+            }
+            
+            ProgressRepository.updateProgress(inputMkv.name, "Complete", 1.0f)
+            return@withContext true
+            
+        } finally {
+            filesToDelete.forEach { 
+                try {
+                    if (it.exists()) it.delete() 
+                } catch(e: Exception) {
+                    Logger.w(TAG, "Failed to delete temp file: ${it.name}")
+                }
+            }
+        }
     }
 
     override suspend fun reencodeVideo(inputPath: String, outputPath: String): Boolean = withContext(Dispatchers.IO) {

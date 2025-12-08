@@ -79,6 +79,15 @@ fun App(
             Column {
                 // Global Progress Bar Overlay
                 val activeDownloads by ProgressRepository.activeDownloads.collectAsState()
+                val activeSpeed by ProgressRepository.activeSpeed.collectAsState()
+                
+                fun formatSpeed(bytesPerSec: Long): String {
+                    if (bytesPerSec < 1024) return "$bytesPerSec B/s"
+                    val kb = bytesPerSec / 1024.0
+                    if (kb < 1024) return "${kb.toString().take(4)} KB/s"
+                    val mb = kb / 1024.0
+                    return "${mb.toString().take(4)} MB/s"
+                }
                 
                 if (activeDownloads.isNotEmpty()) {
                     Column(
@@ -87,6 +96,16 @@ fun App(
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .padding(horizontal = 8.dp, vertical = 4.dp)
                     ) {
+                        // Total Speed Header
+                        val totalSpeed = activeSpeed.values.sum()
+                        if (totalSpeed > 0) {
+                            Text(
+                                text = "Total Speed: ${formatSpeed(totalSpeed)}",
+                                style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.padding(bottom = 4.dp).align(Alignment.End)
+                            )
+                        }
+
                         activeDownloads.forEach { (fileName, progress) ->
                             androidx.compose.runtime.key(fileName) {
                                 Row(
@@ -101,6 +120,14 @@ fun App(
                                         modifier = Modifier.weight(1f)
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
+                                    val speed = activeSpeed[fileName] ?: 0L
+                                    if (speed > 0) {
+                                        Text(
+                                            text = formatSpeed(speed),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            modifier = Modifier.padding(end = 8.dp)
+                                        )
+                                    }
                                     LinearProgressIndicator(
                                         progress = progress,
                                         modifier = Modifier.width(100.dp).height(8.dp),

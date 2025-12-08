@@ -26,6 +26,13 @@ fun DashboardScreen(
 ) {
     val logs by viewModel.logs.collectAsState()
     val scope = rememberCoroutineScope()
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+
+    LaunchedEffect(logs.size) {
+        if (logs.isNotEmpty()) {
+            listState.animateScrollToItem(logs.lastIndex)
+        }
+    }
 
     // Progress State
     val currentFile by ProgressRepository.currentFile.collectAsState()
@@ -69,6 +76,7 @@ fun DashboardScreen(
             }
             
             LazyColumn(
+                state = listState,
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f)

@@ -217,19 +217,19 @@ class DownloadManager(
                 var lastProgressTime = 0L
                 ProgressRepository.startDownload(fileName)
                 
-                sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath) { bytesRead, totalBytes ->
-                     val now = System.currentTimeMillis()
-                     if (now - lastProgressTime > 100) { 
-                        lastProgressTime = now
-                        ProgressRepository.updateProgress(fileName, bytesRead, totalBytes)
-                        
-                        val percentage = if (totalBytes > 0) ((bytesRead.toDouble() / totalBytes.toDouble()) * 100).toInt() else -1
-                        val mbRead = bytesRead / 1024 / 1024
-                        val mbTotal = totalBytes / 1024 / 1024
-                        val status = if (totalBytes > 0) "Downloading ($mbRead/${mbTotal} MB)" else "Downloading ($mbRead MB)"
-                        notificationService.showProgressNotification(fileName, status, percentage, 100, false)
-                     }
-                }
+                 sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath) { bytesRead, totalBytes ->
+                      val now = System.currentTimeMillis()
+                      if (now - lastProgressTime > 500) { 
+                         lastProgressTime = now
+                         ProgressRepository.updateProgress(fileName, bytesRead, totalBytes)
+                         
+                         val percentage = if (totalBytes > 0) ((bytesRead.toDouble() / totalBytes.toDouble()) * 100).toInt() else -1
+                         val mbRead = bytesRead / 1024 / 1024
+                         val mbTotal = totalBytes / 1024 / 1024
+                         val status = if (totalBytes > 0) "Downloading ($mbRead/${mbTotal} MB)" else "Downloading ($mbRead MB)"
+                         notificationService.showProgressNotification(fileName, status, percentage, 100, false)
+                      }
+                 }
                 notificationService.showNotification(fileName, "Download Complete")
                 fetchSuccess = true
             } catch (e: Exception) {
@@ -289,10 +289,21 @@ class DownloadManager(
         log("Downloading $fileName...")
         return try {
             var lastProgressTime = 0L
+            var lastBytesRead = 0L
+            
             sftp.downloadFile("$sourceBasePath/$fileName", localTempFile.absolutePath) { bytesRead, totalBytes ->
                  val now = System.currentTimeMillis()
-                 if (now - lastProgressTime > 200) {  // Smoother updates for UI
+                 if (now - lastProgressTime > 500) {  // Update UI every 500ms for stable speed reading
+                    val deltaBytes = bytesRead - lastBytesRead
+                    val deltaTime = now - lastProgressTime
+                    
+                    if (deltaTime > 0) {
+                        val speedBps = (deltaBytes.toDouble() / deltaTime.toDouble() * 1000).toLong() // Bytes per second
+                        ProgressRepository.updateSpeed(fileName, speedBps)
+                    }
+                    
                     lastProgressTime = now
+                    lastBytesRead = bytesRead
                     // Only update primary global state if NOT in batch mode to prevent flickering
                     ProgressRepository.updateProgress(fileName, bytesRead, totalBytes, updatePrimary = !isBatch)
                  }
