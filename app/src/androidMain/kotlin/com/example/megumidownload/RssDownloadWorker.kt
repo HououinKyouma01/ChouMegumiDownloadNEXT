@@ -125,6 +125,8 @@ class RssDownloadWorker(
                     val totalLength = if (contentLength > 0) contentLength else 100 * 1024 * 1024 // arbitrary 100MB for progress calc if unknown
                     
                     var lastUpdate = System.currentTimeMillis()
+                    
+                    ProgressRepository.startDownload(itemTitle)
 
                     while (input.read(buffer).also { count = it } != -1) {
                          if (isStopped) {
@@ -158,12 +160,16 @@ class RssDownloadWorker(
                             val progressData = workDataOf("progress" to progress, "status" to statusMsg)
                             setProgress(progressData)
                             setForeground(createForegroundInfo(progress, statusMsg))
+                            
+                            ProgressRepository.updateProgress(itemTitle, bytesRead, if (contentLength > 0) contentLength else -1L)
                         }
                     }
                     output.flush()
                     output.close()
                     input.close()
                     response.close()
+                    
+                    ProgressRepository.endDownload(itemTitle)
                     
                     // Download Complete.
                     // We DO NOT rename to .mkv here. We pass the .part file to DownloadManager.
@@ -194,6 +200,9 @@ class RssDownloadWorker(
                 } catch (e: Exception) {
                     if (tempFile.exists()) tempFile.delete()
                     if (finalFile.exists()) finalFile.delete()
+                    if (tempFile.exists()) tempFile.delete()
+                    if (finalFile.exists()) finalFile.delete()
+                    ProgressRepository.endDownload(itemTitle)
                     return@withContext Result.failure(workDataOf("error" to "Download failed: ${e.message}"))
                 }
             } else if (filePath != null) {

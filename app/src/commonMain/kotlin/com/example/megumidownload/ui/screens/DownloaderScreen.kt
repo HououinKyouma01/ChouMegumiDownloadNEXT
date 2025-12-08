@@ -434,21 +434,22 @@ fun DownloaderScreen(
             downloadConfig = downloadConfig,
             seriesNameFolder = seriesList.find { dialogTitle.contains(it.fileNameMatch) }?.folderName,
             onDismiss = { showLinksDialog = false },
-            onLinkClick = { url -> 
+            onLinkClick = { url, item -> 
                 // Using ConfigManager to open URL logic? 
                 // Or we can rely on systemDownloadManager if user wants to download.
                 // But this dialog shows Host Links.
                 // If Host is GoFile, we might want to extract.
                 // For now, let's just create a Download Request.
                 if (url.contains("gofile", true)) {
-                     // Add to queue if user clicks a GoFile link manually?
-                     // Or just generic download for now.
-                     // The requirement is "View Page" vs "Download".
-                     // If it's a direct link or extractable, we probably want to download.
-                     // I will assume for now we just try systemDownloadManager or open if it fails.
-                     // we likely need to extract here too if it's GoFile manually clicked, 
-                     // but for now just pass URL (which might fail if it needs cookies, but simple fallback)
-                     systemDownloadManager.downloadFile(url, "download.html", "Manual Download", null, null)
+                     // Add to queue for extraction and worker handling
+                     val series = seriesList.find { dialogTitle.contains(it.fileNameMatch) }
+                     if (series != null) {
+                        fetchQueue.add(Triple(item, series, groups))
+                        Logger.i("Downloader", "Manually added to Queue: ${item.title}")
+                        showLinksDialog = false // Close dialog to show queue progress
+                     } else {
+                        Logger.e("Downloader", "Could not find series for manual download")
+                     }
                 } else {
                     // Open in Browser
                     systemDownloadManager.openLink(url)
@@ -569,7 +570,7 @@ fun DownloadLinksDialog(
     downloadConfig: DownloadConfig?,
     seriesNameFolder: String?,
     onDismiss: () -> Unit,
-    onLinkClick: (String) -> Unit
+    onLinkClick: (String, RssItem) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -605,7 +606,7 @@ fun DownloadLinksDialog(
                                 if (item.hostLinks.isNotEmpty()) {
                                     item.hostLinks.entries.sortedByDescending { it.key.contains("GoFile", true) }.forEach { (host, url) ->
                                         AssistChip(
-                                            onClick = { onLinkClick(url) },
+                                            onClick = { onLinkClick(url, item) },
                                             label = { Text(host) },
                                             modifier = Modifier.padding(end = 8.dp),
                                             colors = if (host.contains("GoFile", true)) AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.primaryContainer) else AssistChipDefaults.assistChipColors()
@@ -613,7 +614,7 @@ fun DownloadLinksDialog(
                                     }
                                 } else {
                                     AssistChip(
-                                        onClick = { onLinkClick(item.link) },
+                                        onClick = { onLinkClick(item.link, item) },
                                         label = { Text("View Page") }
                                     )
                                 }
