@@ -33,6 +33,9 @@ class AndroidLinkExtractor : LinkExtractor {
         )
 
         LaunchedEffect(url) {
+            // Idle state check
+            if (url.isBlank()) return@LaunchedEffect
+
             var attempts = 0
             val maxAttempts = 30 
             var found = false

@@ -552,7 +552,7 @@ fun SeriesManagerScreen(
 // Dialog Implementations
 
 @Composable
-fun ReplaceEditorDialog(initialContent: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+fun ReplaceEditorDialog(initialContent: String, allowFetch: Boolean = true, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var content by remember { mutableStateOf(initialContent) }
     var error by remember { mutableStateOf<String?>(null) }
     
@@ -563,7 +563,7 @@ fun ReplaceEditorDialog(initialContent: String, onDismiss: () -> Unit, onSave: (
     Dialog(onDismissRequest = onDismiss) {
         Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
             Column(modifier = Modifier.padding(16.dp)) {
-                Text("Edit replace.txt", style = MaterialTheme.typography.titleLarge)
+                Text("Edit Replacements", style = MaterialTheme.typography.titleLarge)
                 Text("Format: OldText|NewText (one per line)", style = MaterialTheme.typography.bodySmall)
                 Spacer(modifier = Modifier.height(8.dp))
                 
@@ -582,13 +582,19 @@ fun ReplaceEditorDialog(initialContent: String, onDismiss: () -> Unit, onSave: (
                 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     // Left side: Fetch Button
-                    if (isFetching) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp))
-                    } else {
-                        TextButton(onClick = { showFetchDialog = true }) {
-                            Text("Fetch Names")
+                    if (allowFetch) {
+                        if (isFetching) {
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp))
+                        } else {
+                            TextButton(onClick = { showFetchDialog = true }) {
+                                Text("Fetch Names")
+                            }
                         }
+                    } else {
+                        Spacer(modifier = Modifier.size(1.dp)) // Spacer to keep layout balanced if needed or just empty
                     }
+
+                    // Right side: Save/Cancel
 
                     // Right side: Save/Cancel
                     Row {

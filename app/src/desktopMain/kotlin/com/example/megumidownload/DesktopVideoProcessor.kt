@@ -188,8 +188,7 @@ class DesktopVideoProcessor : VideoProcessor {
          // Same logic as Android, using SubtitleTextReplacer from commonMain
          try {
              var content = subtitleFile.readText()
-             content = SubtitleTextReplacer.applyStandardReplacements(content)
-             
+             // Custom replacements (Series specific) - Run FIRST
              if (replaceFile != null && replaceFile.exists()) {
                  val replacements = mutableListOf<Pair<String, String>>()
                  replaceFile.forEachLine { line ->
@@ -200,6 +199,9 @@ class DesktopVideoProcessor : VideoProcessor {
                  }
                  content = SubtitleTextReplacer.applyCustomReplacements(content, replacements)
              }
+             
+             // Standard replacements (Global) - Run SECOND
+             content = SubtitleTextReplacer.applyStandardReplacements(content)
              subtitleFile.writeText(content)
              return true
          } catch(e: Exception) {

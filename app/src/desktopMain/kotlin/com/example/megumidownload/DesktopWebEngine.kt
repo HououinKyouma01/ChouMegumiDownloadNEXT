@@ -25,24 +25,17 @@ object DesktopWebEngine {
     fun startup() {
         // Called from main(), runs blocking if exists
         if (MODULE_DIR.exists() && MODULE_DIR.list()?.isNotEmpty() == true) {
-            println("KCEF: Pre-initializing from ${MODULE_DIR.absolutePath}")
-            // We use a simple blocking approach or runblocking, but KCEF.init is async-ish builder.
-            // However, we just need to kick it off.
-            // On Linux, this must happen on Main thread context if possible? 
-            // In main(), we are in main thread.
-            
-           // We can't suspend here easily without runBlocking.
-           // Let's use GlobalScope or just let it init? 
-           // Better: Use runBlocking to ensure it registers before UI.
-           try {
-               kotlinx.coroutines.runBlocking {
-                   withContext(Dispatchers.Main) {
-                       initInternal(false) 
-                   }
-               }
-           } catch(e: Exception) {
-               e.printStackTrace()
-           }
+            Logger.i("DesktopWebEngine", "KCEF: Pre-initializing from ${MODULE_DIR.absolutePath}")
+            try {
+                kotlinx.coroutines.runBlocking {
+                    withContext(Dispatchers.Main) {
+                        initInternal(false) 
+                    }
+                }
+            } catch(e: Exception) {
+                Logger.e("DesktopWebEngine", "Startup failed", e)
+                e.printStackTrace()
+            }
         }
     }
 
@@ -51,13 +44,13 @@ object DesktopWebEngine {
     }
 
     private suspend fun initInternal(isDynamicDownload: Boolean) {
-        if (_state.value is State.Ready || _state.value is State.Initializing || _state.value is State.Downloading || _state.value is State.RestartRequired) return
-        
-        // If this is dynamic download (app already running), we might fail if we try to load libs now.
-        // We will download, but then set state to RestartRequired if it's linux?
-        // Actually, let's try to proceed. KCEF handles download.
+        if (_state.value is State.Ready || _state.value is State.Initializing || _state.value is State.Downloading || _state.value is State.RestartRequired) {
+             Logger.d("DesktopWebEngine", "Already initializing/ready: ${_state.value}")
+             return
+        }
         
         _state.value = State.Initializing
+        Logger.i("DesktopWebEngine", "Initializing KCEF (Dynamics: $isDynamicDownload)...")
         
         withContext(Dispatchers.Main) {
             try {
@@ -69,6 +62,7 @@ object DesktopWebEngine {
                         progress {
                             onDownloading { p ->
                                 _state.value = State.Downloading(p)
+                                Logger.d("DesktopWebEngine", "Downloading: $p")
                             }
                         }
                         settings {
@@ -78,17 +72,26 @@ object DesktopWebEngine {
                     },
                     onError = {
                         if (it != null) {
+                            Logger.e("DesktopWebEngine", "KCEF Error: ${it.message}", it)
                             _state.value = State.Error(it.message ?: "Unknown KCEF Error")
                         }
                     },
                     onRestartRequired = {
+                        Logger.w("DesktopWebEngine", "Restart Required")
                         _state.value = State.RestartRequired
                     }
                 )
                   
+                 Logger.i("DesktopWebEngine", "KCEF Init called. Checking client...")
+                 
+                 // Add small delay to allow CefApp to settle?
+                 // kotlinx.coroutines.delay(500) 
+                 
                  if (KCEF.newClientOrNull() != null) {
+                     Logger.i("DesktopWebEngine", "KCEF Client created successfully. Ready.")
                      _state.value = State.Ready
                  } else {
+                     Logger.w("DesktopWebEngine", "KCEF Client creation returned null.")
                      // If we just downloaded it (isDynamicDownload), we likely need a restart on Linux
                      // to pick up the LD_LIBRARY_PATH or similar context changes, OR simply because of the threading issue.
                      if (isDynamicDownload && System.getProperty("os.name").contains("Linux", ignoreCase = true)) {
@@ -100,6 +103,7 @@ object DesktopWebEngine {
                  }
                  
             } catch (e: Exception) {
+                Logger.e("DesktopWebEngine", "Exception during Init", e)
                 _state.value = State.Error(e.message ?: "Initialization Failed")
                 e.printStackTrace()
             }

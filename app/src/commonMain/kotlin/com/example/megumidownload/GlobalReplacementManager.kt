@@ -64,8 +64,10 @@ object GlobalReplacementManager {
             }
             
             // Merge Defaults: Append only if key doesn't exist
+            val defaultsWithVariants = expandDefaults(STANDARD_DEFAULTS)
+            
             var modified = false
-            STANDARD_DEFAULTS.forEach { (key, value) ->
+            defaultsWithVariants.forEach { (key, value) ->
                 if (!existingKeys.contains(key)) {
                     replacements.add(key to value)
                     existingKeys.add(key)
@@ -76,10 +78,42 @@ object GlobalReplacementManager {
             if (modified) saveToFile()
             
         } else {
-            // First run: Use defaults
-            replacements.addAll(STANDARD_DEFAULTS)
+            // First run: Use defaults expanded
+            replacements.addAll(expandDefaults(STANDARD_DEFAULTS))
             saveToFile()
         }
+    }
+    
+    private fun expandDefaults(defaults: List<Pair<String, String>>): List<Pair<String, String>> {
+        val expanded = mutableListOf<Pair<String, String>>()
+        defaults.forEach { (k, v) ->
+             // Add original
+             expanded.add(k to v)
+             
+             // If key is all lowercase, add Capitalized and Uppercase
+             if (k == k.lowercase() && k[0].isLetter()) {
+                 val capK = k.replaceFirstChar { it.uppercase() }
+                 val capV = v.replaceFirstChar { it.uppercase() }
+                 expanded.add(capK to capV)
+                 
+                 val upperK = k.uppercase()
+                 val upperV = v.uppercase()
+                 expanded.add(upperK to upperV)
+             }
+             // If key is Capitalized (starts upper, rest lower? or just Mixed), add Uppercase
+             else if (k[0].isUpperCase() && k != k.uppercase()) {
+                 val upperK = k.uppercase()
+                 val upperV = v.uppercase()
+                 expanded.add(upperK to upperV)
+             }
+             // Additional manual check for specific patterns could stand here, 
+             // but the simple heuristic covers most:
+             // "pigtails" -> adds "Pigtails", "PIGTAILS"
+             // "Pigtails" -> adds "PIGTAILS"
+             // "Wh-wh" -> adds "WH-WH"? "Wh-Wh"?
+        }
+        // Deduplicate
+        return expanded.distinct()
     }
     
     private fun saveToFile() {

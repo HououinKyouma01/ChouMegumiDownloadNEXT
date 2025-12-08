@@ -12,11 +12,29 @@ import java.io.File
 import com.example.megumidownload.viewmodel.LogViewModel
 
 fun main() {
-    // Attempt early KCEF Init
-    DesktopWebEngine.startup()
+    // Attempt early KCEF Init (Blocking, before App)
+    // Single Instance Check
+    val lockFile = File(System.getProperty("user.home"), ".megumidownload/.app.lock")
+    if (!lockFile.parentFile.exists()) lockFile.parentFile.mkdirs()
+    val channel = java.io.RandomAccessFile(lockFile, "rw").channel
+    val lock = try {
+        channel.tryLock()
+    } catch (e: Exception) {
+        null
+    }
+
+    if (lock == null) {
+        System.err.println("App is already running. Exiting.")
+        // Optionally show a dialog if possible, but for now just exit.
+        // On Linux, exit code 1 is standard for error/failure.
+        System.exit(1)
+    }
     
+    // Attempt early KCEF Init (Blocking, before App)
+    DesktopWebEngine.startup()
+
     application {
-    val appDir = File(System.getProperty("user.home"), ".megumidownload")
+        val appDir = File(System.getProperty("user.home"), ".megumidownload")
     if (!appDir.exists()) appDir.mkdirs()
     val cacheDir = File(appDir, "cache")
     if (!cacheDir.exists()) cacheDir.mkdirs()
@@ -45,6 +63,10 @@ fun main() {
         position = WindowPosition(savedGeometry.x.dp, savedGeometry.y.dp),
         size = DpSize(savedGeometry.width.dp, savedGeometry.height.dp)
     )
+
+    // Initialize Global Managers
+    val configDir = File(System.getProperty("user.home"), ".megumidownloader")
+    GlobalReplacementManager.init(configDir)
 
     Window(
         onCloseRequest = {

@@ -143,6 +143,41 @@ fun SettingsScreen(
             }
             
             item {
+                SettingsSection("Global Replacements") {
+                     var showGlobalReplaceDialog by remember { mutableStateOf(false) }
+                     
+                     Button(
+                        onClick = { showGlobalReplaceDialog = true },
+                        modifier = Modifier.fillMaxWidth()
+                     ) {
+                        Text("Edit Global Replacements")
+                     }
+                     Text("Substitutions applied to ALL series (e.g. Honorifics, Typos)", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top=4.dp))
+                     
+                     if (showGlobalReplaceDialog) {
+                        val replacements = com.example.megumidownload.GlobalReplacementManager.getReplacements()
+                        val initialContent = replacements.joinToString("\n") { "${it.first}|${it.second}" }
+                        
+                        ReplaceEditorDialog(
+                            initialContent = initialContent,
+                            allowFetch = false,
+                            onDismiss = { showGlobalReplaceDialog = false },
+                            onSave = { content ->
+                                val newReplacements = content.lines()
+                                    .filter { it.isNotBlank() && !it.startsWith("#") && it.contains("|") }
+                                    .map { line ->
+                                        val parts = line.split("|", limit = 2)
+                                        parts[0] to parts[1]
+                                    }
+                                com.example.megumidownload.GlobalReplacementManager.saveReplacements(newReplacements)
+                                showGlobalReplaceDialog = false
+                            }
+                        )
+                     }
+                }
+            }
+            
+            item {
                 SettingsSection("Local Storage") {
                     SettingsTextField(
                         value = localPath,

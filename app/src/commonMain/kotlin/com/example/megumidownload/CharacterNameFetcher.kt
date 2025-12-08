@@ -76,16 +76,15 @@ object CharacterNameFetcher {
     }
 
     private fun extractNames(html: String, url: String): List<NameReplacement> {
-        val replacements = mutableListOf<NameReplacement>()
+        val swaps = mutableListOf<NameReplacement>()
+        val variants = mutableListOf<NameReplacement>()
 
         if (url.contains("myanimelist.net")) {
-            // Regex for MAL: Matches both 'h3_character_name' (old/some pages) and 'h3_characters_voice_actors' (current).
             val pattern = Pattern.compile("<h3[^>]*class=[\"'][^\"']*(?:h3_character_name|h3_characters_voice_actors)[^\"']*[\"'][^>]*>([\\s\\S]*?)</h3>")
             val matcher = pattern.matcher(html)
             
             while (matcher.find()) {
                 val rawContent = matcher.group(1) ?: continue
-                // Step 2: Strip tags (<a> or others)
                 val fullName = rawContent.replace(Regex("<[^>]*>"), "").trim()
                 
                 if (fullName.contains(",")) {
@@ -97,24 +96,26 @@ object CharacterNameFetcher {
                         val original = "$givenName $surname"
                         val replacement = "$surname $givenName"
                         
-                        replacements.add(NameReplacement(original, replacement))
+                        swaps.add(NameReplacement(original, replacement))
+                        swaps.add(NameReplacement(original.uppercase(), replacement.uppercase()))
                         
-                        // Add uppercase variant
-                        replacements.add(NameReplacement(original.uppercase(), replacement.uppercase()))
+                        // Generate Variants
+                        generateVariants(givenName).forEach { variant ->
+                            variants.add(NameReplacement(variant, givenName))
+                        }
+                        generateVariants(surname).forEach { variant ->
+                            variants.add(NameReplacement(variant, surname))
+                        }
                     }
                 }
             }
         } else if (url.contains("anidb.net")) {
-             // AniDB: Look for <td class="name char character"> context.
-             // Regex matches class containing "character" inside a td.
              val pattern = Pattern.compile("<td[^>]*class=[\"'][^\"']*character[^\"']*[\"'][^>]*>([\\s\\S]*?)</td>")
              val matcher = pattern.matcher(html)
              while (matcher.find()) {
                  val rawContent = matcher.group(1) ?: continue
-                 // Strip tags to get name
                  val fullName = rawContent.replace(Regex("<[^>]*>"), "").trim()
                  
-                 // Filter out empty or garbage matches if regex was too loose (though 'character' class is specific enough usually)
                  if (fullName.isBlank()) continue
 
                  if (fullName.contains(" ")) {
@@ -123,20 +124,110 @@ object CharacterNameFetcher {
                          val surname = parts[0]
                          val givenName = parts.drop(1).joinToString(" ")
                          
-                         val original = "$givenName $surname"
-                         val replacement = "$surname $givenName"
-                         replacements.add(NameReplacement(original, replacement))
+                         val original = "$givenName $surname" // AniDB is Surname Given usually? 
+                         // Check previous code: "if (parts.size >= 2) { val surname = parts[0]"
+                         // So AniDB is Surname Given.
+                         // But we construct original as Given Surname?
+                         // Correct, standard format is Given Surname|Surname Given.
                          
-                         // Add uppercase variant
-                         replacements.add(NameReplacement(original.uppercase(), replacement.uppercase()))
+                         val replacement = "$surname $givenName"
+                         swaps.add(NameReplacement(original, replacement))
+                         swaps.add(NameReplacement(original.uppercase(), replacement.uppercase()))
+                         
+                         generateVariants(givenName).forEach { variant ->
+                            variants.add(NameReplacement(variant, givenName))
+                        }
+                        generateVariants(surname).forEach { variant ->
+                            variants.add(NameReplacement(variant, surname))
+                        }
                      }
                  }
              }
         } else if (url.contains("anilist.co")) {
-             return fetchAnilistNames(url)
+             return fetchAnilistNames(url) // Anilist uses its own logic, should update that too or let it pass
         }
         
-        return replacements.distinct()
+        // Return Variants first, then Swaps
+        // Filter distinct to avoid duplicates
+        return (variants + swaps).distinct()
+    }
+    
+    private fun generateVariants(name: String): List<String> {
+        // Recursive generation
+        // Patterns: ou -> [o, oh, ou], uu -> [u, uu], oo -> [o, oh, oo]
+        // Actually, we don't map to 'ou' because that's the input. We map 'ou' to 'o' and 'oh'.
+        
+        val combinations = mutableListOf<String>()
+        val lower = name.lowercase()
+        
+        // Find all indices of long vowels
+        val vowels = listOf("ou", "uu", "oo")
+        val indices = mutableListOf<Pair<Int, String>>()
+        
+        var i = 0
+        while (i < lower.length - 1) {
+            val sub = lower.substring(i, i + 2)
+            if (sub in vowels) {
+                indices.add(i to sub)
+                i++ // Skip next char to avoid overlap? (e.g. ooo -> oo + o? or o + oo?)
+                // Assuming non-overlapping for simplicity (Shou, Toosaka)
+            }
+            i++
+        }
+        
+        if (indices.isEmpty()) return emptyList()
+        
+        // Generate permutations
+        // Each index has options.
+        // ou: [o, oh]
+        // uu: [u]
+        // oo: [o, oh]
+        
+        fun recurse(currentIndex: Int, currentNameBuilder: StringBuilder, lastPos: Int) {
+            if (currentIndex >= indices.size) {
+                // Append remaining part
+                if (lastPos < name.length) {
+                    currentNameBuilder.append(name.substring(lastPos))
+                }
+                val result = currentNameBuilder.toString()
+                if (result != name) {
+                    combinations.add(result)
+                }
+                return
+            }
+            
+            val (idx, type) = indices[currentIndex]
+            
+            // Append part before this vowel
+            currentNameBuilder.append(name.substring(lastPos, idx))
+            
+            // Variants
+            val options = when (type) {
+                "ou" -> listOf("o", "oh")
+                "oo" -> listOf("o", "oh")
+                "uu" -> listOf("u")
+                else -> listOf()
+            }
+            
+            for (opt in options) {
+                val sb = StringBuilder(currentNameBuilder)
+                // Match case of the vowel (Simple heuristic: if first char of vowel is upper, make output upper?)
+                // 'Shou' -> 'ou' is lowercase. 'S' is handled by prefix.
+                // Assuming vowels are always lowercase in the middle or handled by simple replacement.
+                // If input is "Ou...", then 'O' is upper.
+                // Check original case
+                val originalSegment = name.substring(idx, idx+2)
+                val isUpper = originalSegment[0].isUpperCase()
+                
+                val finalOpt = if (isUpper) opt.replaceFirstChar { it.uppercase() } else opt
+                
+                sb.append(finalOpt)
+                recurse(currentIndex + 1, sb, idx + 2)
+            }
+        }
+        
+        recurse(0, StringBuilder(), 0)
+        return combinations.distinct()
     }
 
     private fun fetchAnilistNames(url: String): List<NameReplacement> {
@@ -206,11 +297,18 @@ object CharacterNameFetcher {
                          
                          replacements.add(NameReplacement(original, replacement))
                          replacements.add(NameReplacement(original.uppercase(), replacement.uppercase()))
+                         
+                         generateVariants(givenName).forEach { variant ->
+                            replacements.add(NameReplacement(variant, givenName))
+                         }
+                         generateVariants(surname).forEach { variant ->
+                            replacements.add(NameReplacement(variant, surname))
+                         }
                      }
                 }
             }
         }
-        return replacements
+        return replacements.distinct()
     }
     
     // GSON Data Classes

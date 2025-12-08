@@ -161,10 +161,7 @@ class AndroidVideoProcessor(private val context: Context) : VideoProcessor {
             // Read content
             var content = subtitleFile.readText() // TODO: Handle encodings like python script
             
-            // Standard replacements
-            content = SubtitleTextReplacer.applyStandardReplacements(content)
-            
-            // Custom replacements
+            // Custom replacements (Series specific) - Run FIRST
             if (replaceFile != null && replaceFile.exists()) {
                 val replacements = mutableListOf<Pair<String, String>>()
                 replaceFile.forEachLine { line ->
@@ -177,6 +174,9 @@ class AndroidVideoProcessor(private val context: Context) : VideoProcessor {
                 }
                 content = SubtitleTextReplacer.applyCustomReplacements(content, replacements)
             }
+            
+            // Standard replacements (Global) - Run SECOND
+            content = SubtitleTextReplacer.applyStandardReplacements(content)
             
             subtitleFile.writeText(content)
             true

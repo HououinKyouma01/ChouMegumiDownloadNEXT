@@ -118,19 +118,41 @@ class DesktopLinkExtractor : LinkExtractor {
         }
 
         // Only render WebView if Ready and NOT showing dialog (to avoid flicker)
-        if (engineState is DesktopWebEngine.State.Ready && !showDownloadDialog) {
+        // Add a small delay to ensure the Composable is fully attached to the window/peer before creating the generic SwingPanel
+        // This helps prevent 'createContext(...) must not be null' AWT errors.
+        var readyToRender by remember { mutableStateOf(false) }
+        LaunchedEffect(engineState, showDownloadDialog) {
+            val stateName = engineState::class.simpleName
+            Logger.d("DesktopLinkExtractor", "State Update: $stateName, ShowDialog: $showDownloadDialog")
+            
+            if (engineState is DesktopWebEngine.State.Ready && !showDownloadDialog) {
+                Logger.d("DesktopLinkExtractor", "Engine Ready. Waiting delay...")
+                delay(200) // Increased to 200ms
+                Logger.d("DesktopLinkExtractor", "Delay finished. Setting readyToRender = true")
+                readyToRender = true
+            } else {
+                if (readyToRender) Logger.d("DesktopLinkExtractor", "Engine not ready or dialog shown. Hiding WebView.")
+                readyToRender = false
+            }
+        }
+
+        if (readyToRender) {
+            Logger.d("DesktopLinkExtractor", "Rendering WebView now.")
             val webViewState = rememberWebViewState(url)
             
             // Invisible WebView (Must be non-zero size for CEF to tick)
+            // Removed alpha() as it causes 'createContext' crashes on some Linux/Swing setups due to transparency context issues.
+            // Size must be small but visible to layout.
             WebView(
                 state = webViewState,
                 navigator = navigator,
-                modifier = Modifier.size(1.dp).alpha(0.01f)
+                modifier = Modifier.size(1.dp)
             )
             
             // Logic to check page load and inject JS
             LaunchedEffect(webViewState.pageTitle) {
                 val title = webViewState.pageTitle
+                // Logger.d("DesktopLinkExtractor", "Page Title Changed: $title")
                 if (title != null && title.startsWith("MEGUMI:")) {
                     Logger.i("DesktopLinkExtractor", "Title-based extraction success!")
                     val json = title.removePrefix("MEGUMI:")
@@ -148,6 +170,7 @@ class DesktopLinkExtractor : LinkExtractor {
             }
             
             LaunchedEffect(webViewState.loadingState) {
+                if (url.isBlank()) return@LaunchedEffect
                 if (webViewState.loadingState is LoadingState.Finished) {
                      // Attempt JS Extraction loop
                      var attempts = 0
