@@ -1,124 +1,246 @@
 package com.example.megumidownload
 
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.unit.dp
+import com.multiplatform.webview.web.LoadingState
+import com.multiplatform.webview.web.WebView
+import com.multiplatform.webview.web.rememberWebViewState
+import com.multiplatform.webview.web.rememberWebViewNavigator
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import com.google.gson.JsonParser
 
 class DesktopLinkExtractor : LinkExtractor {
+
     @Composable
     override fun Extract(url: String, onResult: (ExtractionResult?) -> Unit) {
-        // Desktop implementation extraction not yet supported (requires Headless Browser or JCEF)
-        // Helper to run extraction in background
-        LaunchedEffect(url) {
-            val directLink = if (url.contains("gofile.io/d/")) {
-                extractGoFile(url)
-            } else {
-                url // Assume direct if no extractor matches
-                // Or signal null if strict?
-                // Logic: If we can't extract, maybe it IS a direct link.
-                // But if it's gofile/d/, it's definitely NOT direct.
-            }
-            
-            if (directLink != null) {
-                val result = ExtractionResult(
-                    url = directLink,
-                    cookie = "accountToken=" + (lastToken ?: ""),
-                    userAgent = "Mozilla/5.0"
-                )
-                onResult(result)
-            } else {
-                Logger.w("DesktopLinkExtractor", "Extraction failed or not supported for $url")
-                onResult(null)
+        val engineState by DesktopWebEngine.state.collectAsState()
+        val scope = rememberCoroutineScope()
+        val navigator = rememberWebViewNavigator()
+        
+        var showDownloadDialog by remember { mutableStateOf(false) }
+
+        // Check engine status on entry
+        LaunchedEffect(Unit) {
+            if (!DesktopWebEngine.isReady()) {
+                showDownloadDialog = true
             }
         }
-    }
-    
-    private var lastToken: String? = null
-    
-    // Simple JSON structs for Gson
-    data class GAccountResp(val status: String, val data: GAccountData?)
-    data class GAccountData(val token: String)
-    
-    data class GContentResp(val status: String, val data: GContentData?)
-    data class GContentData(val contents: Map<String, GContentItem>?)
-    data class GContentItem(val link: String, val name: String)
 
-    private suspend fun extractGoFile(url: String): String? {
-        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-            try {
-                Logger.i("DesktopLinkExtractor", "Attempting GoFile extraction for $url")
-                
-                // 1. Get Token (Always fresh)
-                
-                // 1. Get Token (Always fresh)
-                
-                val tokenUrl = "https://api.gofile.io/accounts/guest"
-                val json = simpleGet(tokenUrl)
-                val resp = com.google.gson.Gson().fromJson(json, GAccountResp::class.java)
-                if (resp.status == "ok" && resp.data != null) {
-                     lastToken = resp.data.token
-                     Logger.d("DesktopLinkExtractor", "Got GoFile token: $lastToken")
-                } else {
-                    Logger.e("DesktopLinkExtractor", "Failed to get GoFile token: $json")
-                    return@withContext null
-                }
-                
-                // 2. Get Content ID
-                val idMatch = Regex("gofile\\.io/d/([a-zA-Z0-9]+)").find(url)
-                val contentId = idMatch?.groupValues?.get(1)
-                if (contentId == null) {
-                    Logger.e("DesktopLinkExtractor", "Could not parse Content ID from $url")
-                    return@withContext null
-                }
-                
-                // 3. Get Content
-                val contentUrl = "https://api.gofile.io/contents/$contentId?wt=4fd6sg89d7s6" // Common website token
-                val contentJson = simpleGet(contentUrl, lastToken)
-                
-                val contentResp = com.google.gson.Gson().fromJson(contentJson, GContentResp::class.java)
-                if (contentResp.status == "ok" && contentResp.data != null && contentResp.data.contents != null) {
-                    // Start finding files
-                    // contents is a Map<String, Item>
-                    val items = contentResp.data.contents.values
-                    val target = items.find { it.name.endsWith(".mkv", ignoreCase = true) || it.name.endsWith(".mp4", ignoreCase = true) } 
-                               ?: items.firstOrNull()
-                    
-                    if (target != null) {
-                        Logger.i("DesktopLinkExtractor", "Found direct link: ${target.link}")
-                        return@withContext target.link
+        if (showDownloadDialog) {
+             if (engineState is DesktopWebEngine.State.NotInitialized || engineState is DesktopWebEngine.State.Error) {
+                 AlertDialog(
+                     onDismissRequest = { 
+                         showDownloadDialog = false 
+                         onResult(null) 
+                     },
+                     title = { Text("Enable GoFile Support?") },
+                     text = { 
+                         Column {
+                             Text("To download from GoFile on Desktop, an additional browser engine component (Chromium) is required (~150MB).")
+                             if (engineState is DesktopWebEngine.State.Error) {
+                                 Spacer(Modifier.height(8.dp))
+                                 Text("Previous Error: ${(engineState as DesktopWebEngine.State.Error).message}")
+                             }
+                         }
+                     },
+                     confirmButton = {
+                         Button(onClick = {
+                             scope.launch { DesktopWebEngine.init() }
+                         }) {
+                             Text("Download & Install")
+                         }
+                     },
+                     dismissButton = {
+                         TextButton(onClick = {
+                             showDownloadDialog = false
+                             onResult(null)
+                         }) {
+                             Text("Cancel")
+                         }
+                     }
+                 )
+             } else if (engineState is DesktopWebEngine.State.Downloading || engineState is DesktopWebEngine.State.Initializing) {
+                 AlertDialog(
+                     onDismissRequest = { /* Prevent dismiss during download */ },
+                     title = { Text("Initializing Engine...") },
+                     text = {
+                         Column {
+                             Text("Please wait while the browser engine is set up.")
+                             Spacer(Modifier.height(16.dp))
+                             if (engineState is DesktopWebEngine.State.Downloading) {
+                                 val progress = (engineState as DesktopWebEngine.State.Downloading).progress
+                                 LinearProgressIndicator(progress = progress)
+                                 Text("${(progress * 100).toInt()}%")
+                             } else {
+                                 LinearProgressIndicator()
+                             }
+                         }
+                     },
+                     confirmButton = {}
+                 )
+             } else if (engineState is DesktopWebEngine.State.RestartRequired) {
+                 AlertDialog(
+                     onDismissRequest = { 
+                         showDownloadDialog = false 
+                         onResult(null) 
+                     },
+                     title = { Text("Restart Required") },
+                     text = { Text("The browser engine has been installed. Please restart the application to enable GoFile support.") },
+                     confirmButton = {
+                         Button(onClick = {
+                             showDownloadDialog = false
+                             onResult(null)
+                             // Optional: System.exit(0)
+                         }) {
+                             Text("OK")
+                         }
+                     }
+                 )
+             } else if (engineState is DesktopWebEngine.State.Ready) {
+                 // Close dialog once ready
+                 LaunchedEffect(Unit) {
+                     showDownloadDialog = false
+                 }
+             }
+        }
+
+        // Only render WebView if Ready and NOT showing dialog (to avoid flicker)
+        if (engineState is DesktopWebEngine.State.Ready && !showDownloadDialog) {
+            val webViewState = rememberWebViewState(url)
+            
+            // Invisible WebView (Must be non-zero size for CEF to tick)
+            WebView(
+                state = webViewState,
+                navigator = navigator,
+                modifier = Modifier.size(1.dp).alpha(0.01f)
+            )
+            
+            // Logic to check page load and inject JS
+            LaunchedEffect(webViewState.pageTitle) {
+                val title = webViewState.pageTitle
+                if (title != null && title.startsWith("MEGUMI:")) {
+                    Logger.i("DesktopLinkExtractor", "Title-based extraction success!")
+                    val json = title.removePrefix("MEGUMI:")
+                    try {
+                        val result = com.google.gson.JsonParser.parseString(json).asJsonObject
+                        val extractedUrl = result.get("url").asString
+                        val cookie = if (result.has("cookie")) result.get("cookie").asString else null
+                        val userAgent = if (result.has("userAgent")) result.get("userAgent").asString else null
+                        
+                        onResult(ExtractionResult(extractedUrl, cookie, userAgent))
+                    } catch(e: Exception) {
+                        Logger.e("DesktopLinkExtractor", "Title JSON Error: ${e.message}")
                     }
                 }
-                
-                Logger.w("DesktopLinkExtractor", "No suitable file found in GoFile folder.")
-                return@withContext null
-                
-            } catch (e: Exception) {
-                Logger.e("DesktopLinkExtractor", "GoFile extraction error: ${e.message}")
-                e.printStackTrace()
-                return@withContext null
+            }
+            
+            LaunchedEffect(webViewState.loadingState) {
+                if (webViewState.loadingState is LoadingState.Finished) {
+                     // Attempt JS Extraction loop
+                     var attempts = 0
+                     val maxAttempts = 30
+                     var found = false
+                     
+                     while (attempts < maxAttempts && !found) {
+                         delay(1000)
+                          attempts++
+                          Logger.d("DesktopLinkExtractor", "Extraction Attempt $attempts/$maxAttempts. Title: ${webViewState.pageTitle}, URL: ${webViewState.lastLoadedUrl}")
+                         
+                         val js = """
+                            (function() {
+                                try {
+                                    var resultLink = null;
+                                    // 1. Check native appdata object (fastest)
+                                    if (typeof appdata !== 'undefined' && appdata.fileManager?.mainContent?.data?.children) {
+                                        var children = appdata.fileManager.mainContent.data.children;
+                                        var keys = Object.keys(children);
+                                        for (var i = 0; i < keys.length; i++) {
+                                            var item = children[keys[i]];
+                                            if (item.type === 'file' && item.link && item.link.match(/\.(mkv|mp4|webm|avi)/i)) {
+                                                resultLink = item.link;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    // 2. Fallback: Check window.go.appdata which is common in GoFile
+                                    if (!resultLink && typeof window.go !== 'undefined' && window.go.appdata && window.go.appdata.fileManager?.mainContent?.data?.children) {
+                                        var children = window.go.appdata.fileManager.mainContent.data.children;
+                                         var keys = Object.keys(children);
+                                         for (var i = 0; i < keys.length; i++) {
+                                             var item = children[keys[i]];
+                                             if (item.type === 'file' && item.link && item.link.match(/\.(mkv|mp4|webm|avi)/i)) {
+                                                 resultLink = item.link;
+                                                 break;
+                                             }
+                                         }
+                                    }
+                                    // 3. Last resort DOM scraping
+                                    if (!resultLink) {
+                                         var links = document.getElementsByTagName('a');
+                                         for(var i=0; i<links.length; i++) {
+                                             if(links[i].href.match(/\.(mkv|mp4|webm|avi)/i)) {
+                                                 resultLink = links[i].href;
+                                                 break;
+                                             }
+                                         }
+                                    }
+                                    if (resultLink) {
+                                        var json = JSON.stringify({ url: resultLink, cookie: document.cookie, userAgent: navigator.userAgent });
+                                        document.title = "MEGUMI:" + json;
+                                        return json;
+                                    }
+                                } catch(e) { return null; }
+                                return null;
+                            })();
+                         """.trimIndent()
+                         
+                         try {
+                              navigator.evaluateJavaScript(js) { result: String ->
+                                   Logger.d("DesktopLinkExtractor", "JS Result: $result")
+                                   if (!found && result != "null" && result != "\"null\"" && result != "undefined" && result != "\"undefined\"") {
+                                       try {
+                                           // Result might be double-escaped JSON string
+                                           val cleanJson = result.trim('"').replace("\\\"", "\"").replace("\\\\", "\\")
+                                           
+                                           val jsonObject = JsonParser.parseString(cleanJson).asJsonObject
+                                           val link = if (jsonObject.has("url")) jsonObject.get("url").asString else ""
+                                           val cookie = if (jsonObject.has("cookie")) jsonObject.get("cookie").asString else ""
+                                           val ua = if (jsonObject.has("userAgent")) jsonObject.get("userAgent").asString else ""
+                                           
+                                           if (link.isNotEmpty()) {
+                                               found = true
+                                               onResult(ExtractionResult(link, cookie, ua))
+                                           }
+                                       } catch (e: Exception) {
+                                            Logger.e("DesktopLinkExtractor", "JSON Parse error: ${e.message}")
+                                       }
+                                   }
+                              }
+                         } catch (e: Exception) {
+                             Logger.e("DesktopLinkExtractor", "JS Eval failed: ${e.message}")
+                         }
+                         
+                         if (found) break
+                     }
+                     
+                     if (!found && attempts >= maxAttempts) {
+                         onResult(null)
+                     }
+                }
             }
         }
-    }
-    
-    private fun simpleGet(url: String, token: String? = null): String {
-        val u = java.net.URL(url)
-        val conn = u.openConnection() as java.net.HttpURLConnection
-        Logger.d("DesktopLinkExtractor", "GET $url")
-        if (token != null) conn.setRequestProperty("Authorization", "Bearer $token")
-        // Mimic Browser
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-        conn.setRequestProperty("Origin", "https://gofile.io") 
-        conn.setRequestProperty("Referer", "https://gofile.io/")
-        
-        conn.connectTimeout = 15000
-        conn.readTimeout = 15000
-        
-        val code = conn.responseCode
-        if (code >= 400) {
-            val err = conn.errorStream?.bufferedReader()?.readText() ?: ""
-            Logger.e("DesktopLinkExtractor", "GoFile Error $code: $err")
-            throw java.io.IOException("HTTP $code: $err")
-        }
-        
-        return conn.inputStream.bufferedReader().readText()
     }
 }

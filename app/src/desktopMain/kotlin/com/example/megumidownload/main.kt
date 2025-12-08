@@ -11,7 +11,11 @@ import androidx.compose.material3.MaterialTheme
 import java.io.File
 import com.example.megumidownload.viewmodel.LogViewModel
 
-fun main() = application {
+fun main() {
+    // Attempt early KCEF Init
+    DesktopWebEngine.startup()
+    
+    application {
     val appDir = File(System.getProperty("user.home"), ".megumidownload")
     if (!appDir.exists()) appDir.mkdirs()
     val cacheDir = File(appDir, "cache")
@@ -75,4 +79,5 @@ fun main() = application {
             )
         }
     }
+}
 }

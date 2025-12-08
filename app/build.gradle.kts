@@ -64,6 +64,7 @@ kotlin {
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.0")
+                implementation("io.github.kevinnzou:compose-webview-multiplatform:1.9.20")
             }
         }
     }

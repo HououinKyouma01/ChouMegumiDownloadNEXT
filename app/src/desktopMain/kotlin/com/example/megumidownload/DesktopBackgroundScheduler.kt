@@ -48,45 +48,75 @@ class DesktopBackgroundScheduler(
                 // Since this is "auto download" flow, we want to download to a temp location and then process.
                 
                 // We'll simplistic logic here:
-                // Use a basic HTTP download (assuming common HttpClient available or just Java URL)
-                val tempFile = File(config.localBasePath, "$title.part") // Or system temp
+                // Use OkHttp for robust download (GoFile needs cookies/headers)
+                val tempFile = File(config.localBasePath, "$title.part")
+                val finalName = if (title.endsWith(".mkv", true)) title else "$title.mkv"
+                val finalFile = File(config.localBasePath, finalName)
+
+                if (tempFile.exists()) tempFile.delete()
+                if (finalFile.exists()) finalFile.delete()
+
+                val client = okhttp3.OkHttpClient.Builder()
+                    .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+                    .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
+
+                val requestBuilder = okhttp3.Request.Builder().url(url)
+                if (!cookie.isNullOrBlank()) {
+                    requestBuilder.addHeader("Cookie", cookie)
+                }
+                if (!userAgent.isNullOrBlank()) {
+                    requestBuilder.addHeader("User-Agent", userAgent)
+                }
+
+                val response = client.newCall(requestBuilder.build()).execute()
                 
-                // ... Implementation detail: Using java.net.URL for simplicity since network logic isn't fully abstracted for "download to file" in common yet
-                // Actually DownloadManager handles SFTP/Local. HTTP is via RssDownloadWorker on Android.
+                if (!response.isSuccessful) {
+                    Logger.e("BackgroundScheduler", "Download failed: HTTP ${response.code}")
+                    return@launch
+                }
+
+                val body = response.body
+                if (body == null) {
+                    Logger.e("BackgroundScheduler", "Download failed: Empty body")
+                    return@launch
+                }
+
+                val contentLength = body.contentLength()
+                val contentType = body.contentType()?.toString()
                 
-                // For desktop, let's just log for now or try simple download
-                // In a real scenario we'd use Ktor or OkHttp
-                 val u = java.net.URL(url)
-                 val conn = u.openConnection() as java.net.HttpURLConnection
-                 conn.requestMethod = "GET"
-                 if (cookie != null) {
-                     conn.setRequestProperty("Cookie", cookie)
-                 }
-                 if (userAgent != null) {
-                     conn.setRequestProperty("User-Agent", userAgent)
-                 }
-                 conn.instanceFollowRedirects = true
-                 conn.connectTimeout = 15000
-                 conn.readTimeout = 30000
-                 
-                 val responseCode = conn.responseCode
-                 Logger.i("BackgroundScheduler", "HTTP $responseCode for $url")
-                 
-                 if (responseCode >= 400) {
-                     Logger.e("BackgroundScheduler", "Download failed with HTTP $responseCode")
+                if (contentType?.contains("text/html", true) == true) {
+                     Logger.e("BackgroundScheduler", "Download failed: Content is HTML (likely error page)")
                      return@launch
-                 }
-                 
-                 conn.inputStream.use { input ->
-                     java.io.FileOutputStream(tempFile).use { output ->
-                         input.copyTo(output)
-                     }
-                 }
-                 
-                 Logger.i("BackgroundScheduler", "File downloaded to ${tempFile.absolutePath}, processing...")
+                }
+
+                ProgressRepository.startDownload(title)
+                
+                body.byteStream().use { input ->
+                    java.io.FileOutputStream(tempFile).use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var bytesRead = 0L
+                        var count: Int
+                        var lastUpdate = System.currentTimeMillis()
+
+                        while (input.read(buffer).also { count = it } != -1) {
+                            output.write(buffer, 0, count)
+                            bytesRead += count
+
+                            val now = System.currentTimeMillis()
+                            if (now - lastUpdate > 500) {
+                                lastUpdate = now
+                                ProgressRepository.updateProgress(title, bytesRead, if(contentLength > 0) contentLength else -1L)
+                            }
+                        }
+                    }
+                }
+                
+                ProgressRepository.endDownload(title)
+                Logger.i("BackgroundScheduler", "File downloaded to ${tempFile.absolutePath}, processing...")
                  
                  // Process
-                 val success = downloadManager.processTempFile(tempFile, "$title.mkv", config.localBasePath, series)
+                 val success = downloadManager.processTempFile(tempFile, finalName, config.localBasePath, series)
                  if (success) {
                      Logger.i("BackgroundScheduler", "Download & Process Complete: $title")
                  } else {
@@ -95,6 +125,7 @@ class DesktopBackgroundScheduler(
 
             } catch (e: Exception) {
                 Logger.e("BackgroundScheduler", "Download Failed: ${e.message}")
+                ProgressRepository.endDownload(title) // Ensure cleanup on error
             }
         }
     }
