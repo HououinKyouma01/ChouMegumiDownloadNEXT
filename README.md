@@ -38,12 +38,12 @@ The command center of the app.
 ### 📺 Series Manager
 This is where you organize your catalog. The interface is designed to be streamlined:
 
-![Series Manager Main](assets/2.png)
+![Series Manager Main](assets/3.png)
 
 #### 1. Adding a Series
 To track a new anime, click the **Add (+)** button.
 
-![Adding Series](assets/3.png)
+![Adding Series](assets/2.png)
 
 *   **Match Name**: This is the keyword found in the **filename** (e.g. `Sousou no Frieren`).
 *   **Folder Name**: This is what **you** call the series locally (e.g. `Frieren`).
