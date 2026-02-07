@@ -20,9 +20,18 @@ object SubtitleTextReplacer {
         var result = text
         var count = 0
         for ((old, new) in replacements) {
-            // Regex for whole word replacement as per python script
-            // (?<!\w)old(?!\w)
-            val pattern = "(?<!\\w)${Regex.escape(old)}(?!\\w)".toRegex()
+            // Flexible Regex for whole word replacement handling \N and \n
+            // 1. Escape the search term
+            val escapedOld = Regex.escape(old)
+            
+            // 2. Replace escaped spaces with flexible whitespace/newline matcher
+            // Matches: space OR (optional space + (\N or \n) + optional space)
+            val flexibleOld = escapedOld.replace("\\ ", "(?:\\s+|\\s*(?:\\\\N|\\\\n)\\s*)")
+            
+            // 3. Lookbehind: Start of string OR Newline/ASS-break OR Non-Word char
+            // 4. Lookahead: End of string OR Newline/ASS-break OR Non-Word char
+            val pattern = "(?:(?<=^|\\\\N|\\\\n)|(?<!\\w))$flexibleOld(?:(?=$|\\\\N|\\\\n)|(?!\\w))".toRegex(RegexOption.IGNORE_CASE)
+            
             val matches = pattern.findAll(result).count()
             if (matches > 0) {
                 Logger.d("SubtitleTextReplacer", "Replaced '$old' with '$new' ($matches times)")

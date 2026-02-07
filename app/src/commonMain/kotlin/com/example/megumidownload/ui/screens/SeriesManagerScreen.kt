@@ -51,7 +51,8 @@ fun SeriesManagerScreen(
     seriesManager: SeriesManager,
     syncManager: SyncManager,
     configManager: ConfigManager,
-    backgroundScheduler: BackgroundScheduler?
+    backgroundScheduler: BackgroundScheduler?,
+    onReprocessEpisode: (SeriesEntry, File) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     
@@ -91,11 +92,13 @@ fun SeriesManagerScreen(
     var rememberConflictChoice by remember { mutableStateOf(false) }
     var conflictChoice by remember { mutableStateOf(false) }
     
-    // Diff Viewer State
     var showDiffDialog by remember { mutableStateOf(false) }
     var diffLocalContent by remember { mutableStateOf("") }
     var diffRemoteContent by remember { mutableStateOf("") }
     var onDiffResolve by remember { mutableStateOf<((String) -> Unit)?>(null) }
+    
+    var showReprocessDialog by remember { mutableStateOf(false) }
+    var reprocessSeries by remember { mutableStateOf<SeriesEntry?>(null) }
     
     val localPath by configManager.localPath.collectAsState(initial = "")
     val smbHost by configManager.smbHost.collectAsState(initial = "")
@@ -255,6 +258,23 @@ fun SeriesManagerScreen(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Sync")
                                 }
+                                
+                                val reprocessMode by configManager.reprocessMode.collectAsState(initial = false)
+                                if (reprocessMode) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    Button(
+                                        onClick = {
+                                            reprocessSeries = series
+                                            showReprocessDialog = true
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text("Reprocess Episodes", color = MaterialTheme.colorScheme.onErrorContainer)
+                                    }
+                                }
                             }
                         }
                     }
@@ -375,6 +395,17 @@ fun SeriesManagerScreen(
             },
             onResolve = { content ->
                 onDiffResolve?.invoke(content)
+            }
+        )
+    }
+
+    if (showReprocessDialog && reprocessSeries != null) {
+        ReprocessSeriesDialog(
+            series = reprocessSeries!!,
+            localPath = localPath,
+            onDismiss = { showReprocessDialog = false },
+            onReprocess = { file ->
+                onReprocessEpisode(reprocessSeries!!, file)
             }
         )
     }
@@ -1030,6 +1061,82 @@ fun EpisodeSelectionDialog(
                         val selectedFiles = files.filterIndexed { index, _ -> selectionStates[index] }
                         onConfirm(selectedFiles)
                     }) { Text("Confirm (${files.filterIndexed { index, _ -> selectionStates[index] }.size})") }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ReprocessSeriesDialog(
+    series: SeriesEntry,
+    localPath: String,
+    onDismiss: () -> Unit,
+    onReprocess: (File) -> Unit
+) {
+    var files by remember { mutableStateOf<List<File>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    
+    LaunchedEffect(series, localPath) {
+        if (localPath.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                val dir = File(localPath, "${series.folderName}/Season ${series.seasonNumber}")
+                if (dir.exists()) {
+                    files = dir.listFiles()?.filter { it.isFile && (it.name.endsWith(".mkv", ignoreCase = true) || it.name.endsWith(".mp4", ignoreCase = true)) }?.sortedBy { it.name } ?: emptyList()
+                }
+            }
+        }
+        isLoading = false
+    }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.8f)) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text("Reprocess Episodes", style = MaterialTheme.typography.titleLarge)
+                Text("${series.folderName} (Season ${series.seasonNumber})", style = MaterialTheme.typography.bodySmall)
+                Spacer(modifier = Modifier.height(16.dp))
+                
+                if (isLoading) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+                } else if (files.isEmpty()) {
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("No video files found in season folder.")
+                    }
+                } else {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(files) { file ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    file.name, 
+                                    style = MaterialTheme.typography.bodySmall, 
+                                    maxLines = 1, 
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                    onClick = { 
+                                        onReprocess(file)
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.height(32.dp)
+                                ) {
+                                    Text("Reprocess", style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                            Divider()
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(16.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onDismiss) { Text("Close") }
                 }
             }
         }

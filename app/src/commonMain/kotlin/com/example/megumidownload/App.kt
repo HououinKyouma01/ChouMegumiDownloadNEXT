@@ -25,6 +25,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Alignment
@@ -168,7 +170,18 @@ fun App(
                  DashboardScreen(logViewModel, permissionHandler, configManager, backgroundScheduler)
             }
             composable(Screen.Series.route) { 
-                 SeriesManagerScreen(seriesManager, syncManager, configManager, backgroundScheduler)
+                 val scope = rememberCoroutineScope()
+                 SeriesManagerScreen(
+                     seriesManager, 
+                     syncManager, 
+                     configManager, 
+                     backgroundScheduler,
+                     onReprocessEpisode = { series, file ->
+                         scope.launch {
+                             downloadManager.reprocessEpisode(series, file)
+                         }
+                     }
+                 )
             }
             composable(Screen.Settings.route) { 
                  SettingsScreen(configManager, seriesManager, permissionHandler) 

@@ -95,6 +95,9 @@ class DesktopConfigManager : ConfigManager {
     private val _batchProcessing = MutableStateFlow(false)
     override val batchProcessing: Flow<Boolean> = _batchProcessing.asStateFlow()
     
+    private val _reprocessMode = MutableStateFlow(false)
+    override val reprocessMode: Flow<Boolean> = _reprocessMode.asStateFlow()
+    
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
     
     // Window Config Keys
@@ -183,6 +186,7 @@ class DesktopConfigManager : ConfigManager {
         
         _parallelDownloads.value = properties.getProperty(ConfigKeys.PARALLEL_DOWNLOADS.keyName, "1").toIntOrNull() ?: 1
         _batchProcessing.value = properties.getProperty(ConfigKeys.BATCH_PROCESSING.keyName, "false").toBoolean()
+        _reprocessMode.value = properties.getProperty(ConfigKeys.REPROCESS_MODE.keyName, "false").toBoolean()
     }
     
     private fun saveConfig() {
@@ -217,6 +221,7 @@ class DesktopConfigManager : ConfigManager {
         
         properties.setProperty(ConfigKeys.PARALLEL_DOWNLOADS.keyName, _parallelDownloads.value.toString())
         properties.setProperty(ConfigKeys.BATCH_PROCESSING.keyName, _batchProcessing.value.toString())
+        properties.setProperty(ConfigKeys.REPROCESS_MODE.keyName, _reprocessMode.value.toString())
 
         configFile.outputStream().use { properties.store(it, "Megumi Downloader Config") }
     }
@@ -252,6 +257,7 @@ class DesktopConfigManager : ConfigManager {
             
             ConfigKeys.PARALLEL_DOWNLOADS -> _parallelDownloads.value = value as Int
             ConfigKeys.BATCH_PROCESSING -> _batchProcessing.value = value as Boolean
+            ConfigKeys.REPROCESS_MODE -> _reprocessMode.value = value as Boolean
             else -> {}
         }
         saveConfig()

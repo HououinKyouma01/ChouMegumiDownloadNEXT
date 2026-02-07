@@ -43,6 +43,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
         private val DEBUG_LOGS = booleanPreferencesKey("debug_logs")
         private val PARALLEL_DOWNLOADS = intPreferencesKey("parallel_downloads")
         private val BATCH_PROCESSING = booleanPreferencesKey("batch_processing")
+        private val REPROCESS_MODE = booleanPreferencesKey("reprocess_mode")
     }
 
     override val host: Flow<String> = context.dataStore.data.map { it[HOST] ?: "" }
@@ -74,6 +75,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
     override val debugLogs: Flow<Boolean> = context.dataStore.data.map { it[DEBUG_LOGS] ?: false }
     override val parallelDownloads: Flow<Int> = context.dataStore.data.map { it[PARALLEL_DOWNLOADS] ?: 1 }
     override val batchProcessing: Flow<Boolean> = context.dataStore.data.map { it[BATCH_PROCESSING] ?: false }
+    override val reprocessMode: Flow<Boolean> = context.dataStore.data.map { it[REPROCESS_MODE] ?: false }
 
     init {
        // Watch for debug flag changes and update Logger
@@ -122,6 +124,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
             ConfigKeys.DEBUG_LOGS -> DEBUG_LOGS as Preferences.Key<T>
             ConfigKeys.PARALLEL_DOWNLOADS -> PARALLEL_DOWNLOADS as Preferences.Key<T>
             ConfigKeys.BATCH_PROCESSING -> BATCH_PROCESSING as Preferences.Key<T>
+            ConfigKeys.REPROCESS_MODE -> REPROCESS_MODE as Preferences.Key<T>
             else -> throw IllegalArgumentException("Unknown key: ${key.keyName}")
         }
     }

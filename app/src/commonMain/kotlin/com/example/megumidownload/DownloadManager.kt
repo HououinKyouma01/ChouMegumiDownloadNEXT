@@ -321,7 +321,8 @@ class DownloadManager(
         localTempFile: File,
         originalFileName: String,
         localDestBasePath: String,
-        series: SeriesEntry
+        series: SeriesEntry,
+        fixTimingOverride: Boolean? = null
     ): Boolean {
         // 2. Extract Episode Number
         val epMatch = Regex("(?i)(?:s\\d{1,2}e|-|\\s|ep|episode)\\s*(\\d{1,3})(?:v\\d)?(?:end)?(?:[\\s\\[\\(._-]|\$)").find(originalFileName)
@@ -392,11 +393,14 @@ class DownloadManager(
         val processedFile = File(tempDir, "processed_$originalFileName")
         
         // We process if fixTiming is ON OR if we have a replace file
-        if (series.fixTiming || replaceFile != null) {
-             log("Processing video (Timing: ${series.fixTiming}, Replace: ${replaceFile != null})...")
-             val offset = if (series.fixTiming) 0L else 0L 
+        val doFixTiming = fixTimingOverride ?: series.fixTiming
+        if (doFixTiming || replaceFile != null) {
+             // If manual reprocess (fixTimingOverride != null), we might want to log it
+             log("Processing video (Timing: $doFixTiming [Override: ${fixTimingOverride != null}], Replace: ${replaceFile != null})...")
+             // Offset is 0 unless we calculate it. Current logic uses 0.
+             val offset = 0L 
              
-             val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile, series.fixTiming)
+             val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile, doFixTiming)
              if (success) {
                  fileToMove = processedFile
                  log("Processing complete.", LogType.SUCCESS)
@@ -428,6 +432,86 @@ class DownloadManager(
         } catch (e: Exception) {
             log("Move failed: ${e.message}", LogType.ERROR)
             return false
+        }
+    }
+
+    suspend fun reprocessEpisode(series: SeriesEntry, videoFile: File) {
+        log("Starting Reprocess for ${videoFile.name}...")
+        
+        val config = configManager.getDownloadConfig()
+        val localSourcePath = config.localSourcePath
+        if (localSourcePath.isBlank()) {
+            log("Cannot reprocess: Local Source Path is not set in settings.", LogType.ERROR)
+            return
+        }
+        
+        val destDir = videoFile.parentFile
+        val fileListFile = File(destDir, "filelist.txt")
+        var originalName = videoFile.name
+        
+        // 1. Update filelist.txt and find original name
+        if (fileListFile.exists()) {
+             val lines = fileListFile.readLines()
+             val newLines = mutableListOf<String>()
+             var found = false
+             
+             for (line in lines) {
+                 // Format: OriginalName (FinalName.mkv)
+                 // We look for FinalName.mkv closing parenthesis? or just contains
+                 if (line.contains("(${videoFile.name})")) {
+                     found = true
+                     // Try to extract original name: "Original.mkv (Final.mkv)"
+                     val parts = line.split(" (${videoFile.name})")
+                     if (parts.isNotEmpty()) {
+                         originalName = parts[0].trim()
+                     }
+                     log("Removed from filelist.txt: $line")
+                 } else {
+                     newLines.add(line)
+                 }
+             }
+             
+             if (found) {
+                 fileListFile.writeText(newLines.joinToString("\n") + "\n")
+             } else {
+                 log("Could not find entry in filelist.txt. Using current name.", LogType.WARNING)
+             }
+        }
+        
+        // 2. Move to Local Source (Drop Folder)
+        val sourceDir = File(localSourcePath)
+        if (!sourceDir.exists()) sourceDir.mkdirs()
+        
+        val targetFile = File(sourceDir, originalName)
+        
+        try {
+            if (videoFile.renameTo(targetFile)) {
+                log("Moved back to Jump/Drop folder: ${targetFile.name}")
+                
+                // 3. Process
+                processTempFile(
+                    localTempFile = targetFile,
+                    originalFileName = originalName,
+                    localDestBasePath = config.localBasePath,
+                    series = series,
+                    fixTimingOverride = false // FORCE SKIP TIMING
+                )
+            } else {
+                // Try copy + delete if rename fails (cross-filesystem)
+                videoFile.copyTo(targetFile, overwrite = true)
+                videoFile.delete()
+                log("Moved (Copy/Delete) back to Jump/Drop folder: ${targetFile.name}")
+                
+                processTempFile(
+                    localTempFile = targetFile,
+                    originalFileName = originalName,
+                    localDestBasePath = config.localBasePath,
+                    series = series,
+                    fixTimingOverride = false
+                )
+            }
+        } catch (e: Exception) {
+            log("Failed to move file for reprocessing: ${e.message}", LogType.ERROR)
         }
     }
 

@@ -19,6 +19,7 @@ gen/
 out/
 build/
 .gradle/
+release/
 
 # Local configuration file (contains personal paths)
 local.properties

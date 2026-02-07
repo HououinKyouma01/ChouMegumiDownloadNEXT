@@ -61,6 +61,7 @@ object ConfigKeys {
     val DEBUG_LOGS = ConfigKey.BooleanKey("debug_logs")
     val PARALLEL_DOWNLOADS = ConfigKey.IntKey("parallel_downloads")
     val BATCH_PROCESSING = ConfigKey.BooleanKey("batch_processing")
+    val REPROCESS_MODE = ConfigKey.BooleanKey("reprocess_mode")
 }
 
 interface ConfigManager {
@@ -93,6 +94,7 @@ interface ConfigManager {
     val debugLogs: Flow<Boolean>
     val parallelDownloads: Flow<Int>
     val batchProcessing: Flow<Boolean>
+    val reprocessMode: Flow<Boolean>
 
     suspend fun <T> updateConfig(key: ConfigKey<T>, value: T)
     

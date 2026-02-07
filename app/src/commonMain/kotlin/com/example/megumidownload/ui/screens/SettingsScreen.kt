@@ -139,6 +139,17 @@ fun SettingsScreen(
                         )
                         Text("Enable Debug Logs")
                     }
+                    val reprocessMode by configManager.reprocessMode.collectAsState(initial = false)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = reprocessMode,
+                            onCheckedChange = { scope.launch { configManager.updateConfig(ConfigKeys.REPROCESS_MODE, it) } }
+                        )
+                        Column {
+                            Text("Enable Reprocess Mode")
+                            Text("Shows 'Reprocess' options in Series Manager. Dangerous!", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
+                    }
                 }
             }
             
