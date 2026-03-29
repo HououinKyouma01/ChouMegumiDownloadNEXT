@@ -62,6 +62,7 @@ object ConfigKeys {
     val PARALLEL_DOWNLOADS = ConfigKey.IntKey("parallel_downloads")
     val BATCH_PROCESSING = ConfigKey.BooleanKey("batch_processing")
     val REPROCESS_MODE = ConfigKey.BooleanKey("reprocess_mode")
+    val SUBTITLE_LANGUAGE = ConfigKey.StringKey("subtitle_language")
 }
 
 interface ConfigManager {
@@ -95,6 +96,7 @@ interface ConfigManager {
     val parallelDownloads: Flow<Int>
     val batchProcessing: Flow<Boolean>
     val reprocessMode: Flow<Boolean>
+    val subtitleLanguage: Flow<String>
 
     suspend fun <T> updateConfig(key: ConfigKey<T>, value: T)
     

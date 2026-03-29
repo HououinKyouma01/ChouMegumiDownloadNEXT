@@ -131,6 +131,15 @@ fun SettingsScreen(
                         Text("Append Quality [1080p]")
                     }
                     Divider()
+                    val subtitleLanguage by configManager.subtitleLanguage.collectAsState(initial = "eng")
+                    SettingsTextField(
+                        value = subtitleLanguage,
+                        onValueChange = { scope.launch { configManager.updateConfig(ConfigKeys.SUBTITLE_LANGUAGE, it) } },
+                        label = "Subtitle Language Code",
+                        supportingText = "ISO 639-2 code (e.g. eng, jpn). Default: eng"
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Divider()
                     val debugLogs by configManager.debugLogs.collectAsState(initial = false)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(

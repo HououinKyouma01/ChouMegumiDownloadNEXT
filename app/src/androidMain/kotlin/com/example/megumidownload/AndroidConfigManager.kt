@@ -44,6 +44,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
         private val PARALLEL_DOWNLOADS = intPreferencesKey("parallel_downloads")
         private val BATCH_PROCESSING = booleanPreferencesKey("batch_processing")
         private val REPROCESS_MODE = booleanPreferencesKey("reprocess_mode")
+        private val SUBTITLE_LANGUAGE = stringPreferencesKey("subtitle_language")
     }
 
     override val host: Flow<String> = context.dataStore.data.map { it[HOST] ?: "" }
@@ -76,6 +77,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
     override val parallelDownloads: Flow<Int> = context.dataStore.data.map { it[PARALLEL_DOWNLOADS] ?: 1 }
     override val batchProcessing: Flow<Boolean> = context.dataStore.data.map { it[BATCH_PROCESSING] ?: false }
     override val reprocessMode: Flow<Boolean> = context.dataStore.data.map { it[REPROCESS_MODE] ?: false }
+    override val subtitleLanguage: Flow<String> = context.dataStore.data.map { it[SUBTITLE_LANGUAGE] ?: "eng" }
 
     init {
        // Watch for debug flag changes and update Logger
@@ -125,6 +127,7 @@ class AndroidConfigManager(private val context: Context) : ConfigManager {
             ConfigKeys.PARALLEL_DOWNLOADS -> PARALLEL_DOWNLOADS as Preferences.Key<T>
             ConfigKeys.BATCH_PROCESSING -> BATCH_PROCESSING as Preferences.Key<T>
             ConfigKeys.REPROCESS_MODE -> REPROCESS_MODE as Preferences.Key<T>
+            ConfigKeys.SUBTITLE_LANGUAGE -> SUBTITLE_LANGUAGE as Preferences.Key<T>
             else -> throw IllegalArgumentException("Unknown key: ${key.keyName}")
         }
     }

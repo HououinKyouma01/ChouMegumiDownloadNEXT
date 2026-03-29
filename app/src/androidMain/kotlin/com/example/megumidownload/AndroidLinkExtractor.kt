@@ -48,7 +48,8 @@ class AndroidLinkExtractor : LinkExtractor {
                     (function() {
                         try {
                             var resultLink = null;
-                            if (typeof appdata !== 'undefined' && appdata.fileManager && appdata.fileManager.mainContent && appdata.fileManager.mainContent.data && appdata.fileManager.mainContent.data.children) {
+                            // 1. Userscript Logic: appdata.fileManager.mainContent.data.children
+                            if (typeof appdata !== 'undefined' && appdata.fileManager?.mainContent?.data?.children) {
                                 var children = appdata.fileManager.mainContent.data.children;
                                 var keys = Object.keys(children);
                                 for (var i = 0; i < keys.length; i++) {
@@ -59,6 +60,21 @@ class AndroidLinkExtractor : LinkExtractor {
                                     }
                                 }
                             }
+                            
+                            // 2. Fallback: window.go.appdata
+                            if (!resultLink && typeof window.go !== 'undefined' && window.go.appdata?.fileManager?.mainContent?.data?.children) {
+                                var children = window.go.appdata.fileManager.mainContent.data.children;
+                                 var keys = Object.keys(children);
+                                 for (var i = 0; i < keys.length; i++) {
+                                     var item = children[keys[i]];
+                                     if (item.type === 'file' && item.link && item.link.match(/\.(mkv|mp4|webm|avi)/i)) {
+                                         resultLink = item.link;
+                                         break;
+                                     }
+                                 }
+                            }
+                            
+                            // 3. Last resort DOM scraping
                             if (!resultLink) {
                                  var links = document.getElementsByTagName('a');
                                  for(var i=0; i<links.length; i++) {
@@ -68,6 +84,7 @@ class AndroidLinkExtractor : LinkExtractor {
                                      }
                                  }
                             }
+                            
                             if (resultLink) {
                                 return JSON.stringify({ url: resultLink, cookie: document.cookie, userAgent: navigator.userAgent });
                             }

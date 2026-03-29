@@ -14,7 +14,8 @@ class DesktopVideoProcessor : VideoProcessor {
         outputMkv: File,
         subtitleOffsetMs: Long,
         replaceFile: File?,
-        fixTiming: Boolean
+        fixTiming: Boolean,
+        subtitleLanguage: String
     ): Boolean = withContext(Dispatchers.IO) {
         
         val filesToDelete = mutableListOf<File>()
@@ -83,8 +84,12 @@ class DesktopVideoProcessor : VideoProcessor {
             ProgressRepository.updateProgress(inputMkv.name, "Muxing", 0.95f)
             Logger.d(TAG, "Muxing to ${outputMkv.absolutePath}")
             // ffmpeg -i input -i adjusted -map 0:v -map 0:a -map 1 -c copy -c:s ass -disposition:s:0 default output -y
+            // Changed order: Map subtitles (1) before attachments (0:t?)
+            // Added -c:t copy
             val muxCmd = listOf("ffmpeg", "-i", inputMkv.absolutePath, "-i", finalSubtitleFile.absolutePath, 
-                "-map", "0:v", "-map", "0:a", "-map", "1", "-c", "copy", "-c:s", "ass", "-disposition:s:0", "default", outputMkv.absolutePath, "-y")
+                "-map", "0:v", "-map", "0:a", "-map", "1", "-map", "0:t?", "-c", "copy", "-c:s", "ass", "-c:t", "copy",
+                "-metadata:s:s:0", "language=$subtitleLanguage", "-max_interleave_delta", "0",
+                "-disposition:s:0", "default", outputMkv.absolutePath, "-y")
                 
             if (!runCommand(muxCmd)) {
                  Logger.e(TAG, "Failed to mux")

@@ -399,8 +399,9 @@ class DownloadManager(
              log("Processing video (Timing: $doFixTiming [Override: ${fixTimingOverride != null}], Replace: ${replaceFile != null})...")
              // Offset is 0 unless we calculate it. Current logic uses 0.
              val offset = 0L 
+             val subtitleLanguage = configManager.subtitleLanguage.first()
              
-             val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile, doFixTiming)
+             val success = videoProcessor.processVideo(localTempFile, processedFile, offset, replaceFile, doFixTiming, subtitleLanguage)
              if (success) {
                  fileToMove = processedFile
                  log("Processing complete.", LogType.SUCCESS)

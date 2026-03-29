@@ -98,6 +98,10 @@ class DesktopConfigManager : ConfigManager {
     private val _reprocessMode = MutableStateFlow(false)
     override val reprocessMode: Flow<Boolean> = _reprocessMode.asStateFlow()
     
+    private val _subtitleLanguage = MutableStateFlow("eng")
+    override val subtitleLanguage: Flow<String> = _subtitleLanguage.asStateFlow()
+
+    
     private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
     
     // Window Config Keys
@@ -187,6 +191,7 @@ class DesktopConfigManager : ConfigManager {
         _parallelDownloads.value = properties.getProperty(ConfigKeys.PARALLEL_DOWNLOADS.keyName, "1").toIntOrNull() ?: 1
         _batchProcessing.value = properties.getProperty(ConfigKeys.BATCH_PROCESSING.keyName, "false").toBoolean()
         _reprocessMode.value = properties.getProperty(ConfigKeys.REPROCESS_MODE.keyName, "false").toBoolean()
+        _subtitleLanguage.value = properties.getProperty(ConfigKeys.SUBTITLE_LANGUAGE.keyName, "eng")
     }
     
     private fun saveConfig() {
@@ -222,6 +227,7 @@ class DesktopConfigManager : ConfigManager {
         properties.setProperty(ConfigKeys.PARALLEL_DOWNLOADS.keyName, _parallelDownloads.value.toString())
         properties.setProperty(ConfigKeys.BATCH_PROCESSING.keyName, _batchProcessing.value.toString())
         properties.setProperty(ConfigKeys.REPROCESS_MODE.keyName, _reprocessMode.value.toString())
+        properties.setProperty(ConfigKeys.SUBTITLE_LANGUAGE.keyName, _subtitleLanguage.value)
 
         configFile.outputStream().use { properties.store(it, "Megumi Downloader Config") }
     }
@@ -258,6 +264,7 @@ class DesktopConfigManager : ConfigManager {
             ConfigKeys.PARALLEL_DOWNLOADS -> _parallelDownloads.value = value as Int
             ConfigKeys.BATCH_PROCESSING -> _batchProcessing.value = value as Boolean
             ConfigKeys.REPROCESS_MODE -> _reprocessMode.value = value as Boolean
+            ConfigKeys.SUBTITLE_LANGUAGE -> _subtitleLanguage.value = value as String
             else -> {}
         }
         saveConfig()

@@ -127,7 +127,7 @@ class DesktopLinkExtractor : LinkExtractor {
             
             if (engineState is DesktopWebEngine.State.Ready && !showDownloadDialog) {
                 Logger.d("DesktopLinkExtractor", "Engine Ready. Waiting delay...")
-                delay(200) // Increased to 200ms
+                delay(500) // Increased to 500ms to prevent 'createContext' crash on Linux
                 Logger.d("DesktopLinkExtractor", "Delay finished. Setting readyToRender = true")
                 readyToRender = true
             } else {
@@ -141,12 +141,12 @@ class DesktopLinkExtractor : LinkExtractor {
             val webViewState = rememberWebViewState(url)
             
             // Invisible WebView (Must be non-zero size for CEF to tick)
-            // Removed alpha() as it causes 'createContext' crashes on some Linux/Swing setups due to transparency context issues.
-            // Size must be small but visible to layout.
+            // Use alpha(0f) to hide it, but keep size=1.dp to prevent 0-size rendering issues.
+            // The 500ms delay above manages the race condition for context creation.
             WebView(
                 state = webViewState,
                 navigator = navigator,
-                modifier = Modifier.size(1.dp)
+                modifier = Modifier.size(1.dp).alpha(0f)
             )
             
             // Logic to check page load and inject JS

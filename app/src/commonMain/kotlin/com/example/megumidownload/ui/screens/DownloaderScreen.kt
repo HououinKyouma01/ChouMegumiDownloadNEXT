@@ -285,12 +285,19 @@ fun DownloaderScreen(
                                             val goFileLink = firstItem.hostLinks.entries.find { it.key.contains("GoFile", true) }?.value
                                             
                                             if (goFileLink != null) {
-                                                fetchQueue.add(Triple(firstItem, series, groups))
                                                 Logger.i("Downloader", "Added to Queue: ${firstItem.title}")
                                                 isLoading = false
                                             } else {
-                                                showLinksDialog = true
-                                                isLoading = false
+                                                // Fallback: Open first available link in browser
+                                                val firstLink = firstItem.hostLinks.values.firstOrNull() ?: firstItem.link
+                                                if (firstLink.isNotBlank()) {
+                                                    Logger.i("Downloader", "No GoFile link found. Auto-opening fallback: $firstLink")
+                                                    systemDownloadManager.openLink(firstLink)
+                                                    isLoading = false
+                                                } else {
+                                                    showLinksDialog = true
+                                                    isLoading = false
+                                                }
                                             }
                                         } else {
                                             showLinksDialog = true
@@ -587,7 +594,17 @@ fun DownloadLinksDialog(
                             }
                         }
                         
-                        Column(modifier = Modifier.padding(bottom = 16.dp).background(if(isDownloaded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.3f) else MaterialTheme.colorScheme.surface)) {
+                        Column(
+                            modifier = Modifier
+                                .padding(bottom = 16.dp)
+                                .background(if(isDownloaded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha=0.3f) else MaterialTheme.colorScheme.surface)
+                                .clickable {
+                                    val firstLink = item.hostLinks.values.firstOrNull() ?: item.link
+                                    if (firstLink.isNotBlank()) {
+                                        onLinkClick(firstLink, item)
+                                    }
+                                }
+                        ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     item.title, 

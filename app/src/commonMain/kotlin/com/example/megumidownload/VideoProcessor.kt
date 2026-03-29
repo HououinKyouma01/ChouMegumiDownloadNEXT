@@ -8,7 +8,8 @@ interface VideoProcessor {
         outputMkv: File,
         subtitleOffsetMs: Long = 0,
         replaceFile: File? = null,
-        fixTiming: Boolean = false
+        fixTiming: Boolean = false,
+        subtitleLanguage: String = "eng"
     ): Boolean
     
     suspend fun reencodeVideo(inputPath: String, outputPath: String): Boolean

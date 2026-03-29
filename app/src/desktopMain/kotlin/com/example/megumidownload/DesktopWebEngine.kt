@@ -60,13 +60,17 @@ object DesktopWebEngine {
                     builder = {
                         installDir(kcefDir)
                         progress {
-                            onDownloading { p ->
-                                _state.value = State.Downloading(p)
-                                Logger.d("DesktopWebEngine", "Downloading: $p")
-                            }
+                             onDownloading { p ->
+                                 _state.value = State.Downloading(p)
+                                 Logger.d("DesktopWebEngine", "Downloading: $p")
+                             }
                         }
                         settings {
-                            cachePath = kcefDir.absolutePath
+                            // Use a separate directory for cache/user data to avoid locking the bundle install dir
+                            val dataDir = File(File(System.getProperty("user.home"), ".megumidownload"), "web-cache")
+                            if (!dataDir.exists()) dataDir.mkdirs()
+                            
+                            cachePath = dataDir.absolutePath
                             noSandbox = true
                         }
                     },

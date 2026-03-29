@@ -18,7 +18,8 @@ class AndroidVideoProcessor(private val context: Context) : VideoProcessor {
         outputMkv: File,
         subtitleOffsetMs: Long,
         replaceFile: File?,
-        fixTiming: Boolean
+        fixTiming: Boolean,
+        subtitleLanguage: String
     ): Boolean = withContext(Dispatchers.IO) {
         val filesToDelete = mutableListOf<File>()
         try {
@@ -129,8 +130,9 @@ class AndroidVideoProcessor(private val context: Context) : VideoProcessor {
             // 6. Re-mux using FFmpeg
             ProgressRepository.updateProgress(inputMkv.name, "Muxing", 0.95f)
             Logger.d(TAG, "Muxing to ${outputMkv.absolutePath}")
-            // Use -max_interleave_delta 0 to avoid buffer errors
-            val muxSession = FFmpegKit.execute("-i \"${inputMkv.absolutePath}\" -i \"${finalSubtitleFile.absolutePath}\" -map 0:v -map 0:a -map 1 -c copy -c:s ass -disposition:s:0 default \"${outputMkv.absolutePath}\" -y")
+            // Changed order: Map subtitles (1) before attachments (0:t?) to avoid player issues
+            // Added -c:t copy to explicitly copy attachments
+            val muxSession = FFmpegKit.execute("-i \"${inputMkv.absolutePath}\" -i \"${finalSubtitleFile.absolutePath}\" -map 0:v -map 0:a -map 1 -map 0:t? -c copy -c:s ass -c:t copy -metadata:s:s:0 language=$subtitleLanguage -max_interleave_delta 0 -disposition:s:0 default \"${outputMkv.absolutePath}\" -y")
             
             if (!ReturnCode.isSuccess(muxSession.returnCode)) {
                 Logger.e(TAG, "Failed to mux. Output: ${muxSession.allLogsAsString}")
