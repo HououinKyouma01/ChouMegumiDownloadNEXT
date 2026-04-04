@@ -19,10 +19,29 @@ object SubtitleTextReplacer {
     fun applyCustomReplacements(text: String, replacements: List<Pair<String, String>>): String {
         var result = text
         var count = 0
+        
+        val globalRules = mutableListOf<Pair<String, String>>()
+        data class ActorRule(val actor: String, val oldText: String, val newText: String)
+        val actorRules = mutableListOf<ActorRule>()
+        
         for ((old, new) in replacements) {
-            // Flexible Regex for whole word replacement handling \N and \n
+            val trimmedOld = old.trim()
+            if (trimmedOld.startsWith("[") && trimmedOld.contains("]")) {
+                val endIndex = trimmedOld.indexOf("]")
+                val actor = trimmedOld.substring(1, endIndex).trim()
+                val oldText = trimmedOld.substring(endIndex + 1).trim()
+                if (oldText.isNotEmpty()) {
+                    actorRules.add(ActorRule(actor, oldText, new))
+                }
+            } else {
+                globalRules.add(old to new)
+            }
+        }
+
+        // Helper function for the regex replacement logic
+        fun replaceText(input: String, oldText: String, newText: String): String {
             // 1. Split the search term by spaces and escape each word individually
-            val words = old.trim().split("\\s+".toRegex())
+            val words = oldText.trim().split("\\s+".toRegex())
             val escapedWords = words.map { Regex.escape(it) }
             
             // 2. Join words with flexible whitespace/newline matcher
@@ -33,13 +52,51 @@ object SubtitleTextReplacer {
             // 4. Lookahead: End of string OR Newline/ASS-break OR Non-Word char
             val pattern = "(?:(?<=^|\\\\N|\\\\n)|(?<!\\w))$flexibleOld(?:(?=$|\\\\N|\\\\n)|(?!\\w))".toRegex(RegexOption.IGNORE_CASE)
             
-            val matches = pattern.findAll(result).count()
+            var modified = input
+            val matches = pattern.findAll(modified).count()
             if (matches > 0) {
-                Logger.d("SubtitleTextReplacer", "Replaced '$old' with '$new' ($matches times)")
-                result = result.replace(pattern, new)
+                Logger.d("SubtitleTextReplacer", "Replaced '$oldText' with '$newText' ($matches times)")
+                modified = modified.replace(pattern, newText)
                 count += matches
             }
+            return modified
         }
+
+        // 1. Apply Global Rules over the entire file
+        for ((oldText, newText) in globalRules) {
+            result = replaceText(result, oldText, newText)
+        }
+        
+        // 2. Apply Actor Rules line by line (only lines starting with Dialogue:)
+        if (actorRules.isNotEmpty()) {
+            val lines = result.split("\n")
+            val newLines = lines.map { line ->
+                if (line.startsWith("Dialogue:")) {
+                    // Dialogue: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text
+                    val parts = line.split(",", limit = 10)
+                    if (parts.size == 10) {
+                        val lineActor = parts[4].trim()
+                        var lineText = parts[9]
+                        
+                        // Apply all matching actor rules inside this line's text
+                        for (rule in actorRules) {
+                            if (lineActor.contains(rule.actor, ignoreCase = true)) {
+                                lineText = replaceText(lineText, rule.oldText, rule.newText)
+                            }
+                        }
+                        
+                        // Reassemble the parts
+                        parts.subList(0, 9).joinToString(",") + "," + lineText
+                    } else {
+                        line
+                    }
+                } else {
+                    line
+                }
+            }
+            result = newLines.joinToString("\n")
+        }
+
         Logger.d("SubtitleTextReplacer", "Total custom replacements: $count")
         return result
     }
