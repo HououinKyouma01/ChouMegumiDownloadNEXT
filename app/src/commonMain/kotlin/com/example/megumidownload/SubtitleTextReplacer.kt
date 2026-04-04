@@ -21,12 +21,13 @@ object SubtitleTextReplacer {
         var count = 0
         for ((old, new) in replacements) {
             // Flexible Regex for whole word replacement handling \N and \n
-            // 1. Escape the search term
-            val escapedOld = Regex.escape(old)
+            // 1. Split the search term by spaces and escape each word individually
+            val words = old.trim().split("\\s+".toRegex())
+            val escapedWords = words.map { Regex.escape(it) }
             
-            // 2. Replace escaped spaces with flexible whitespace/newline matcher
+            // 2. Join words with flexible whitespace/newline matcher
             // Matches: space OR (optional space + (\N or \n) + optional space)
-            val flexibleOld = escapedOld.replace("\\ ", "(?:\\s+|\\s*(?:\\\\N|\\\\n)\\s*)")
+            val flexibleOld = escapedWords.joinToString("(?:\\s+|\\s*(?:\\\\N|\\\\n)\\s*)")
             
             // 3. Lookbehind: Start of string OR Newline/ASS-break OR Non-Word char
             // 4. Lookahead: End of string OR Newline/ASS-break OR Non-Word char
