@@ -325,8 +325,22 @@ class DownloadManager(
         fixTimingOverride: Boolean? = null
     ): Boolean {
         // 2. Extract Episode Number
-        val epMatch = Regex("(?i)(?:s\\d{1,2}e|-|\\s|ep|episode)\\s*(\\d{1,3})(?:v\\d)?(?:end)?(?:[\\s\\[\\(._-]|\$)").find(originalFileName)
-        val epNum = epMatch?.groupValues?.get(1)?.toIntOrNull()?.toString()?.padStart(2, '0') ?: "00"
+        var epNumStr: String? = null
+        val match1 = Regex("(?i)(?:s\\d{1,2}e|\\s-\\s|\\bep\\s*|\\bepisode\\s*)(\\d{1,4})(?:v\\d)?(?:end)?(?=[\\s\\[\\(._-]|\$)").find(originalFileName)
+        if (match1 != null) {
+            epNumStr = match1.groupValues[1]
+        } else {
+            val matches2 = Regex("(?i)\\s(\\d{2,4})(?:v\\d)?(?:end)?(?=[\\s\\[\\(._-]|\$)").findAll(originalFileName).toList()
+            if (matches2.isNotEmpty()) {
+                epNumStr = matches2.last().groupValues[1]
+            } else {
+                val matches3 = Regex("(?i)\\s(\\d{1,4})(?:v\\d)?(?:end)?(?=[\\s\\[\\(._-]|\$)").findAll(originalFileName).toList()
+                if (matches3.isNotEmpty()) {
+                    epNumStr = matches3.last().groupValues[1]
+                }
+            }
+        }
+        val epNum = epNumStr?.toIntOrNull()?.toString()?.padStart(2, '0') ?: "00"
         
         // 3. Prepare Destination
         val destDir = File(localDestBasePath, "${series.folderName}/Season ${series.seasonNumber}")
