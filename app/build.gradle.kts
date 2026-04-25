@@ -78,8 +78,8 @@ android {
         applicationId = "com.example.megumidownload"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.3.0"
         
         // Optimize APK size: Only include native libraries for ARM devices (99% of phones) & x86_64 (Emulators/Chromebooks)
         // Dropping x86 (32-bit) saves space.
@@ -147,7 +147,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb)
             packageName = "MegumiDownload"
-            packageVersion = "1.1.0"
+            packageVersion = "1.3.0"
         }
         buildTypes.release.proguard {
             version.set("7.5.0")

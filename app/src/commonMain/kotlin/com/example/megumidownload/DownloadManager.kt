@@ -59,6 +59,11 @@ class DownloadManager(
                 return@withContext
             }
             processRemoteFiles(host, user, password, remotePath, localBasePath, localSourcePath)
+            
+            // Sweep local drop folder for manually placed files after SFTP process
+            if (localSourcePath.isNotBlank()) {
+                processLocalFiles(localSourcePath, localBasePath)
+            }
         }
     }
 
