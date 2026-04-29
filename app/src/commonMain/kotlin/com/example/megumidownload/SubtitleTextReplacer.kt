@@ -62,40 +62,42 @@ object SubtitleTextReplacer {
             return modified
         }
 
-        // 1. Apply Global Rules over the entire file
-        for ((oldText, newText) in globalRules) {
-            result = replaceText(result, oldText, newText)
-        }
-        
-        // 2. Apply Actor Rules line by line (only lines starting with Dialogue:)
-        if (actorRules.isNotEmpty()) {
-            val lines = result.split("\n")
-            val newLines = lines.map { line ->
-                if (line.startsWith("Dialogue:")) {
-                    // Dialogue: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text
-                    val parts = line.split(",", limit = 10)
-                    if (parts.size == 10) {
-                        val lineActor = parts[4].trim()
-                        var lineText = parts[9]
-                        
-                        // Apply all matching actor rules inside this line's text
-                        for (rule in actorRules) {
-                            if (lineActor.contains(rule.actor, ignoreCase = true)) {
+        // Apply Global and Actor Rules line by line (only lines starting with Dialogue:)
+        val lines = result.split("\n")
+        val newLines = lines.map { line ->
+            if (line.startsWith("Dialogue:")) {
+                // Dialogue: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text
+                val parts = line.split(",", limit = 10)
+                if (parts.size == 10) {
+                    val lineActor = parts[4].trim()
+                    var lineText = parts[9]
+                    
+                    // Apply all global rules
+                    for ((oldText, newText) in globalRules) {
+                        if (!lineText.contains(newText, ignoreCase = true)) {
+                            lineText = replaceText(lineText, oldText, newText)
+                        }
+                    }
+                    
+                    // Apply all matching actor rules inside this line's text
+                    for (rule in actorRules) {
+                        if (lineActor.contains(rule.actor, ignoreCase = true)) {
+                            if (!lineText.contains(rule.newText, ignoreCase = true)) {
                                 lineText = replaceText(lineText, rule.oldText, rule.newText)
                             }
                         }
-                        
-                        // Reassemble the parts
-                        parts.subList(0, 9).joinToString(",") + "," + lineText
-                    } else {
-                        line
                     }
+                    
+                    // Reassemble the parts
+                    parts.subList(0, 9).joinToString(",") + "," + lineText
                 } else {
                     line
                 }
+            } else {
+                line
             }
-            result = newLines.joinToString("\n")
         }
+        result = newLines.joinToString("\n")
 
         Logger.d("SubtitleTextReplacer", "Total custom replacements: $count")
         return result
