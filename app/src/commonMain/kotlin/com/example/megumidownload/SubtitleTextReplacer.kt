@@ -74,7 +74,14 @@ object SubtitleTextReplacer {
                     
                     // Apply all global rules
                     for ((oldText, newText) in globalRules) {
-                        if (!lineText.contains(newText, ignoreCase = true)) {
+                        // EXPLANATION: We must prevent double-replacements during re-processing (e.g., Natsuki -> Natsuki-kun-kun).
+                        // However, we only need this prevention if the new text CONTAINS the old text (a "growth" replacement).
+                        // If it's a "shrinking" replacement (e.g., "Miss Shaula" -> "Shaula"), we MUST NOT check if the line
+                        // already contains the new text, because "Miss Shaula" will obviously always contain "Shaula", which
+                        // would cause the replacer to incorrectly skip it. We also shouldn't skip distinct words 
+                        // (e.g., "Bro" -> "Onii-san") just because "Onii-san" happens to appear elsewhere in the same sentence.
+                        val isGrowthReplacement = newText.contains(oldText, ignoreCase = true)
+                        if (!(isGrowthReplacement && lineText.contains(newText, ignoreCase = true))) {
                             lineText = replaceText(lineText, oldText, newText)
                         }
                     }
@@ -82,7 +89,8 @@ object SubtitleTextReplacer {
                     // Apply all matching actor rules inside this line's text
                     for (rule in actorRules) {
                         if (lineActor.contains(rule.actor, ignoreCase = true)) {
-                            if (!lineText.contains(rule.newText, ignoreCase = true)) {
+                            val isGrowthReplacement = rule.newText.contains(rule.oldText, ignoreCase = true)
+                            if (!(isGrowthReplacement && lineText.contains(rule.newText, ignoreCase = true))) {
                                 lineText = replaceText(lineText, rule.oldText, rule.newText)
                             }
                         }
