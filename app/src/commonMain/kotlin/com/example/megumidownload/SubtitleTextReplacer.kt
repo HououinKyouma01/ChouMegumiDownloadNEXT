@@ -67,9 +67,9 @@ object SubtitleTextReplacer {
         val newLines = lines.map { line ->
             if (line.startsWith("Dialogue:")) {
                 // Dialogue: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text
-                val parts = line.split(",", limit = 10)
+                val parts = line.split(",", limit = 10).toMutableList()
                 if (parts.size == 10) {
-                    val lineActor = parts[4].trim()
+                    var lineActor = parts[4]
                     var lineText = parts[9]
                     
                     // Apply all global rules
@@ -81,6 +81,13 @@ object SubtitleTextReplacer {
                         // would cause the replacer to incorrectly skip it. We also shouldn't skip distinct words 
                         // (e.g., "Bro" -> "Onii-san") just because "Onii-san" happens to appear elsewhere in the same sentence.
                         val isGrowthReplacement = newText.contains(oldText, ignoreCase = true)
+                        
+                        // Apply independently to Actor field
+                        if (!(isGrowthReplacement && lineActor.contains(newText, ignoreCase = true))) {
+                            lineActor = replaceText(lineActor, oldText, newText)
+                        }
+                        
+                        // Apply independently to Text field
                         if (!(isGrowthReplacement && lineText.contains(newText, ignoreCase = true))) {
                             lineText = replaceText(lineText, oldText, newText)
                         }
@@ -88,6 +95,7 @@ object SubtitleTextReplacer {
                     
                     // Apply all matching actor rules inside this line's text
                     for (rule in actorRules) {
+                        // We check against the potentially newly-modified lineActor
                         if (lineActor.contains(rule.actor, ignoreCase = true)) {
                             val isGrowthReplacement = rule.newText.contains(rule.oldText, ignoreCase = true)
                             if (!(isGrowthReplacement && lineText.contains(rule.newText, ignoreCase = true))) {
@@ -97,7 +105,9 @@ object SubtitleTextReplacer {
                     }
                     
                     // Reassemble the parts
-                    parts.subList(0, 9).joinToString(",") + "," + lineText
+                    parts[4] = lineActor
+                    parts[9] = lineText
+                    parts.joinToString(",")
                 } else {
                     line
                 }
