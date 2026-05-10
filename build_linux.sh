@@ -12,9 +12,9 @@ rm -rf app/build/compose/binaries
 ./gradlew :app:createDistributable
 
 echo "[3/3] Packing Linux version..."
-VERSION=$(grep "versionName" app/build.gradle.kts | sed 's/.*= "//;s/"//')
+VERSION=$(grep "val appVersion =" app/build.gradle.kts | sed 's/.*= "//;s/"//')
 DIST_DIR="app/build/compose/binaries/main-release/app"
-OUTPUT_ZIP="MegumiDownload-Linux-${VERSION}.zip"
+OUTPUT_ZIP="ChouMegumiDownload-Linux-${VERSION}-v4.zip"
 DIST_DIR_ALT="app/build/compose/binaries/main/app"
 
 # Clean old zip

@@ -7,6 +7,23 @@ buildscript {
 import java.util.Properties
 import java.io.FileInputStream
 
+val appVersion = "1.3.0"
+val generateAppConfig by tasks.registering {
+    val outputDir = layout.buildDirectory.dir("generated/source/appconfig/commonMain/kotlin")
+    outputs.dir(outputDir)
+    doLast {
+        val packageDir = File(outputDir.get().asFile, "com/example/megumidownload")
+        packageDir.mkdirs()
+        File(packageDir, "AppConfig.kt").writeText("""
+            package com.example.megumidownload
+            
+            object AppConfig {
+                const val VERSION = "$appVersion"
+            }
+        """.trimIndent())
+    }
+}
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.multiplatform")
@@ -26,6 +43,7 @@ kotlin {
     
     sourceSets {
         val commonMain by getting {
+            kotlin.srcDir(generateAppConfig)
             dependencies {
                 implementation(compose.runtime)
                 implementation(compose.foundation)
@@ -79,7 +97,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 3
-        versionName = "1.3.0"
+        versionName = appVersion
         
         // Optimize APK size: Only include native libraries for ARM devices (99% of phones) & x86_64 (Emulators/Chromebooks)
         // Dropping x86 (32-bit) saves space.
@@ -147,7 +165,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(org.jetbrains.compose.desktop.application.dsl.TargetFormat.Dmg, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Msi, org.jetbrains.compose.desktop.application.dsl.TargetFormat.Deb)
             packageName = "MegumiDownload"
-            packageVersion = "1.3.0"
+            packageVersion = appVersion
         }
         buildTypes.release.proguard {
             version.set("7.5.0")

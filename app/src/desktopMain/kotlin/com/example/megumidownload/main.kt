@@ -39,7 +39,7 @@ fun main() {
     val cacheDir = File(appDir, "cache")
     if (!cacheDir.exists()) cacheDir.mkdirs()
 
-    Logger.i("Main", "Starting Megumi Downloader v1.2")
+    Logger.i("Main", "Starting Megumi Downloader v${AppConfig.VERSION}")
     Logger.i("Main", "App Dir: ${appDir.absolutePath}")
 
 

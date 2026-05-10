@@ -67,7 +67,13 @@ Click/Tap on any series card to open the advanced tools.
         *   *Example*: `Nagisa Furukawa` | `Furukawa Nagisa` (Restoring Name Order)
     *   **Import External Lists**:
         *   You can paste a URL to a raw text file (e.g. Pastebin/GitHub Gist) created by other users. The app will download replacements from there, allowing communities to share fix lists.
-    *   **Syntax**: `Original Text` | `New Text`
+    *   **Basic Syntax**: `Original Text` | `New Text`
+    *   **Per-Actor Syntax**: `[ActorName]Original Text` | `New Text`
+        *   *When to use*: This allows you to apply a replacement ONLY when a specific character is speaking. This is perfect for character-specific nicknames, verbal tics, or honorifics that only one person uses.
+        *   *Example*: `[Hinagiku]Itechou` | `Itechou-oniisama` (Only replaces "Itechou" when the speaker is "Hinagiku").
+    *   **Smart Duplicate Prevention**: The engine is designed to be safely run multiple times ("Re-process"). It actively prevents infinite loops like `Natsuki` -> `Natsuki-kun` becoming `Natsuki-kun-kun`. However, it intelligently allows "shrinking" replacements like `Miss Shaula` -> `Shaula` to execute every time without skipping.
+    *   **Case Insensitivity**: The text replacer ignores capitalization when searching. If you provide both `Rindo|Rindou` and `RINDO|RINDOU`, the first rule will catch both normal and ALL-CAPS text and replace it with Title Case `Rindou`. If you want to enforce an ALL-CAPS replacement, ensure the ALL-CAPS rule is listed *above* the normal rule!
+    *   **Actor Name Chaining**: Global rules apply to both the spoken text AND the subtitle's internal "Speaker/Actor" field. If a global rule changes the actor's name (e.g. `Rindo` -> `Rindou`), you can immediately use `[Rindou]` in your per-actor rules, and the engine will seamlessly catch it!
 
 ### 📥 Downloader & RSS
 ![Downloader & RSS](assets/5.png)
